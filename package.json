@@ -1,0 +1,15 @@
+{
+  "name": "ai-usage-observability",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first observability for CLI coding agents",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "migrate": "pnpm --filter @aiuo/schema run migrate",
+    "migrate:status": "pnpm --filter @aiuo/schema run migrate status",
+    "typecheck": "pnpm -r run typecheck"
+  }
+}

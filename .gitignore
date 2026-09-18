@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Never commit a real .env — it holds COLLECTOR_SHARED_SECRET and DB creds.
+.env
+.env.local
+!.env.example
+
+# pg_dump output target (see docs/schema.md → Backup)
+backups/
+
+.DS_Store

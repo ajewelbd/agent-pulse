@@ -1,0 +1,149 @@
+# AI Usage Observability — local-first. Nothing leaves this machine.
+#
+# SECURITY: every published port is bound to 127.0.0.1 on purpose. A bare
+# "4317:4317" would publish to 0.0.0.0, and Docker's publish rules insert
+# their own iptables/pf entries that BYPASS the host firewall — your entire
+# prompt history, including whatever secrets your prompts contained, would be
+# readable by anything on the LAN. Never drop the 127.0.0.1 prefix.
+#
+# Bring up:   docker compose up -d
+# Migrate:    runs automatically as a one-shot before the collector starts.
+# Dev mode:   docker compose -f compose.yaml -f compose.dev.yaml up
+
+name: aiuo
+
+x-common-env: &common-env
+  TZ: UTC
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      <<: *common-env
+      POSTGRES_USER: ${POSTGRES_USER:-aiuo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-aiuo}
+    ports:
+      # 5433 on the host so this never collides with a local postgres on 5432.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Backup target. `make backup` writes a pg_dump custom-format file here.
+      - ./backups:/backups
+    healthcheck:
+      # A real readiness probe, not a TCP poke: -U/-d make pg_isready check the
+      # actual database rather than just the port being open.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiuo} -d ${POSTGRES_DB:-aiuo}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  # One-shot. Migrations MUST NOT run on app boot: two collector replicas
+  # racing each other through DDL is a corruption path.
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/schema/Dockerfile
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  collector:
+    build:
+      context: .
+      dockerfile: apps/collector/Dockerfile
+      args:
+        # Must match your host user or git rejects the bind-mounted repos with
+        # "detected dubious ownership" and every git-based gap fill silently
+        # returns nothing. Find yours with: id -u && id -g   (or `make uid`)
+        HOST_UID: ${HOST_UID:-501}
+        HOST_GID: ${HOST_GID:-20}
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
+      COLLECTOR_PORT: 4317
+      COLLECTOR_SHARED_SECRET: ${COLLECTOR_SHARED_SECRET:?set COLLECTOR_SHARED_SECRET in .env}
+      PATH_MAP: ${PATH_MAP:?set PATH_MAP in .env}
+      WATCH_MODE: ${WATCH_MODE:-auto}
+      WATCH_POLL_INTERVAL_MS: ${WATCH_POLL_INTERVAL_MS:-2000}
+      COLLECTOR_MAX_STDOUT_BYTES: ${COLLECTOR_MAX_STDOUT_BYTES:-8192}
+      COLLECTOR_MAX_DIFF_BYTES: ${COLLECTOR_MAX_DIFF_BYTES:-262144}
+      COLLECTOR_MAX_TURN_DIFF_BYTES: ${COLLECTOR_MAX_TURN_DIFF_BYTES:-2097152}
+      REDACTION_DISABLED: ${REDACTION_DISABLED:-false}
+      AGENT_CLAUDE_CODE_ENABLED: ${AGENT_CLAUDE_CODE_ENABLED:-true}
+      AGENT_CLAUDE_CODE_HOME: /host/agents/claude
+      AGENT_CODEX_CLI_ENABLED: ${AGENT_CODEX_CLI_ENABLED:-false}
+      AGENT_QWEN_CODE_ENABLED: ${AGENT_QWEN_CODE_ENABLED:-false}
+      AGENT_CURSOR_CLI_ENABLED: ${AGENT_CURSOR_CLI_ENABLED:-false}
+      AGENT_COPILOT_CLI_ENABLED: ${AGENT_COPILOT_CLI_ENABLED:-false}
+      AGENT_GEMINI_CLI_ENABLED: ${AGENT_GEMINI_CLI_ENABLED:-false}
+    ports:
+      - "127.0.0.1:4317:4317"
+    volumes:
+      # ALL HOST MOUNTS ARE READ-ONLY. The collector must never write to your
+      # repos or to an agent's config directory.
+      - ${CLAUDE_HOME:-~/.claude}:/host/agents/claude:ro
+      # Code roots. These paths must line up with PATH_MAP or startup fails
+      # loudly — a missing mount must not degrade to "zero turns found".
+      - ${CODE_ROOT_1:?set CODE_ROOT_1 in .env}:/host/code/root1:ro
+      # Add CODE_ROOT_2… here as needed, with a matching PATH_MAP entry.
+      # Checkpoints live in Postgres (see docs/schema.md), so no named volume
+      # is needed here for offsets — pgdata carries them.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------
+  # Phase 4. A SEPARATE service from the collector on purpose: restarting the
+  # proxy to change an upstream must not drop the tailer's file watches or its
+  # checkpoints. Declared now so the topology is reviewable; profiled off
+  # until the app exists, so `docker compose up` works today.
+  # ---------------------------------------------------------------------
+  proxy:
+    profiles: ["phase4"]
+    build:
+      context: .
+      dockerfile: apps/proxy/Dockerfile
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
+      PROXY_PORT: 4318
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Phase 5.
+  web:
+    profiles: ["phase5"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      <<: *common-env
+      # Over the compose network, never through the published host port.
+      DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  # FOOTGUN: `docker compose down -v` deletes this volume and every byte of
+  # ingested history with it. Plain `docker compose down` is the safe form.
+  # Take a dump first: make backup
+  pgdata:

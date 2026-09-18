@@ -1,0 +1,33 @@
+# Development override. The base compose.yaml is production-ish (multi-stage
+# build, non-root user, NODE_ENV=production); this adds source bind-mounts and
+# hot reload.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up
+#
+# Note the source mounts here are read-WRITE (the compiler writes dist/), which
+# is fine: they are this repo, not your agent config or your other repos.
+# The /host/* mounts in the base file stay read-only and are not overridden.
+
+services:
+  collector:
+    build:
+      target: builder
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+      # Bind mounts on Docker Desktop (macOS/Windows) do not deliver inotify
+      # events reliably. In dev, skip the probe and poll outright so a watcher
+      # misfire is never mistaken for an adapter bug.
+      WATCH_MODE: poll
+      WATCH_POLL_INTERVAL_MS: 1000
+    command: ["npm", "--prefix", "apps/collector", "run", "dev"]
+    volumes:
+      - ./apps/collector/src:/app/apps/collector/src
+      - ./packages/schema/src:/app/packages/schema/src
+
+  migrate:
+    build:
+      target: builder
+    volumes:
+      - ./packages/schema/migrations:/app/packages/schema/migrations
+      - ./packages/schema/src:/app/packages/schema/src
