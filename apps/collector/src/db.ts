@@ -4,7 +4,7 @@
  * conflict is possible.
  */
 import pg from 'pg';
-import { Redactor } from './redaction.js';
+import { Redactor } from '@aiuo/schema/redaction';
 
 const { Pool } = pg;
 

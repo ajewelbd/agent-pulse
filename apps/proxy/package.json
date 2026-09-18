@@ -1,25 +1,16 @@
 {
-  "name": "@aiuo/schema",
+  "name": "@aiuo/proxy",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": "./dist/index.js",
-    "./types": "./dist/types.js",
-    "./redaction": "./dist/redaction.js"
-  },
-  "files": [
-    "dist",
-    "migrations"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "migrate": "tsc -p tsconfig.json && node dist/migrate.js"
+    "start": "node dist/main.js",
+    "test": "tsc -p tsconfig.json && node --test dist/*.test.js"
   },
   "dependencies": {
+    "@aiuo/schema": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": {

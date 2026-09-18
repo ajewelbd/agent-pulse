@@ -9,7 +9,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { loadConfig, type CollectorConfig } from './config.js';
 import { Db } from './db.js';
 import { Ingestor, type IngestStats } from './ingest.js';
-import { Redactor } from './redaction.js';
+import { Redactor } from '@aiuo/schema/redaction';
 import { startHookServer } from './server.js';
 import { resolveWatchMode, Watcher } from './watcher.js';
 

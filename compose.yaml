@@ -103,13 +103,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------
-  # Phase 4. A SEPARATE service from the collector on purpose: restarting the
-  # proxy to change an upstream must not drop the tailer's file watches or its
-  # checkpoints. Declared now so the topology is reviewable; profiled off
-  # until the app exists, so `docker compose up` works today.
+  # A SEPARATE service from the collector on purpose: restarting the proxy to
+  # change an upstream must not drop the tailer's file watches or checkpoints.
   # ---------------------------------------------------------------------
   proxy:
-    profiles: ["phase4"]
     build:
       context: .
       dockerfile: apps/proxy/Dockerfile
@@ -117,11 +114,17 @@ services:
       <<: *common-env
       DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
       PROXY_PORT: 4318
+      PROXY_DEFAULT_UPSTREAM: ${PROXY_DEFAULT_UPSTREAM:-https://api.anthropic.com}
+      PROXY_UPSTREAMS: ${PROXY_UPSTREAMS:-}
+      PROXY_MAX_STORED_BODY_BYTES: ${PROXY_MAX_STORED_BODY_BYTES:-65536}
+      REDACTION_DISABLED: ${REDACTION_DISABLED:-false}
     ports:
       - "127.0.0.1:4318:4318"
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Phase 5.
