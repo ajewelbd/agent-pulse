@@ -11,6 +11,7 @@ import { loadConfig, type CollectorConfig } from './config.js';
 import { Db } from './db.js';
 import { Ingestor, type IngestStats } from './ingest.js';
 import { Redactor } from '@aiuo/schema/redaction';
+import { Reconciler } from './reconciler.js';
 import { startHookServer } from './server.js';
 import { resolveWatchMode, Watcher } from './watcher.js';
 
@@ -260,10 +261,24 @@ async function main(): Promise<void> {
   watcher.start();
   log('live tail started');
 
+  const reconcilerRunner = new Reconciler(db);
   const reconciler = setInterval(() => {
-    void db.reconcileStalePartials(STALE_PARTIAL_MS).then((n) => {
-      if (n > 0) log(`reconciler: closed ${n} stale partial turn(s)`);
-    });
+    void reconcilerRunner
+      .run(STALE_PARTIAL_MS)
+      .then((s) => {
+        const parts: string[] = [];
+        if (s.partialsClosed > 0) parts.push(`${s.partialsClosed} stale partial(s) closed`);
+        if (s.matched > 0) parts.push(`${s.matched} proxy call(s) matched`);
+        if (s.ambiguous > 0) parts.push(`${s.ambiguous} ambiguous`);
+        if (s.providersUpgraded > 0) parts.push(`${s.providersUpgraded} provider(s) upgraded to proxy`);
+        if (s.tokensFilled > 0) parts.push(`${s.tokensFilled} turn(s) token-filled`);
+        if (parts.length > 0) log(`reconciler: ${parts.join(', ')}`);
+      })
+      // Must never kill the collector: reconciliation is an enrichment pass,
+      // and losing it is far cheaper than losing the tail.
+      .catch((error: unknown) => {
+        process.stderr.write(`reconciler error: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
   }, 60_000);
 
   const shutdown = async (signal: string): Promise<void> => {
