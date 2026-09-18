@@ -227,7 +227,14 @@ class TurnBuilder {
 
   ingest(rec: ClaudeRecord): void {
     const ts = parseDate(rec.timestamp);
-    if (ts) this.endedAt = ts;
+    // MAX, not "last seen". Timestamps within a turn are not monotonic: a
+    // resumed session re-appends older records, so the final record processed
+    // can predate the prompt. Taking the last one produced ended_at <
+    // started_at, which violates the period CHECK on both turns and sessions
+    // and — because ingest runs in one transaction per transcript — took down
+    // the whole file's pass. Observed on real data: 134 turns ingested instead
+    // of 442.
+    if (ts && (this.endedAt === null || ts > this.endedAt)) this.endedAt = ts;
 
     if (rec.type === 'system' && rec.subtype === 'model_consent_fallback') {
       // A mid-session model switch. The per-record model on each assistant
@@ -424,7 +431,9 @@ class TurnBuilder {
       gitDirty: null,
 
       startedAt: this.startedAt,
-      endedAt: this.endedAt,
+      // Belt and braces after the max() above: if every record in the turn
+      // predates its prompt, report no end time rather than an impossible one.
+      endedAt: this.endedAt !== null && this.endedAt >= this.startedAt ? this.endedAt : null,
       status,
       source: 'logs',
 

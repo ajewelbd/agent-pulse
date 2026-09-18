@@ -97,7 +97,7 @@ async function scanAgent(
   ingestor: Ingestor,
   config: CollectorConfig,
 ): Promise<IngestStats> {
-  const stats: IngestStats = { turns: 0, toolCalls: 0, fileChanges: 0, rawEvents: 0, skipped: 0 };
+  const stats: IngestStats = { turns: 0, toolCalls: 0, fileChanges: 0, rawEvents: 0, skipped: 0, failed: 0 };
   const transcripts = await adapter.discover();
 
   for (const transcript of transcripts) {
@@ -126,6 +126,12 @@ async function scanAgent(
     // One transaction per transcript pass: the checkpoint advances in the same
     // commit as the rows it accounts for, so a crash can never leave an offset
     // ahead of the data. That is the whole reason checkpoints live in Postgres.
+    //
+    // Scoped per transcript so one unparseable file cannot take down the whole
+    // agent's pass. It previously did: a single constraint violation rolled
+    // back and aborted the loop, silently ingesting 134 turns instead of 442
+    // with no indication of which file was at fault.
+    try {
     await db.withTransaction(async (client) => {
       // The resume seq comes from the checkpoint, never from max(seq) in the
       // table: we deliberately re-read the open turn, and deriving its seq from
@@ -152,6 +158,14 @@ async function scanAgent(
         nextSeq: resumeSeq,
       });
     });
+    } catch (error) {
+      // Name the file. Without it the operator gets a stack trace with no
+      // indication of which of 31 transcripts is poisoned.
+      stats.failed += 1;
+      process.stderr.write(
+        `transcript failed, skipping: ${hostPath}\n  ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
   }
 
   return stats;
@@ -228,10 +242,13 @@ async function main(): Promise<void> {
     try {
       for (const { adapter, agentId } of adapters) {
         const stats = await scanAgent(adapter, agentId, db, ingestor, config);
-        if (stats.turns > 0 || stats.skipped > 0) {
+        if (stats.turns > 0 || stats.skipped > 0 || stats.failed > 0) {
           log(
             `${label}: ${adapter.key} — ${stats.turns} turns, ${stats.toolCalls} tool calls, ` +
-              `${stats.fileChanges} file changes${stats.skipped > 0 ? `, ${stats.skipped} skipped (no cwd)` : ''}`,
+              `${stats.fileChanges} file changes` +
+              (stats.skipped > 0 ? `, ${stats.skipped} skipped (no cwd)` : '') +
+              // Never let a failed transcript hide in a success line.
+              (stats.failed > 0 ? `, ${stats.failed} TRANSCRIPT(S) FAILED` : ''),
           );
         }
       }

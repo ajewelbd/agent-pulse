@@ -20,7 +20,10 @@ export interface IngestStats {
   toolCalls: number;
   fileChanges: number;
   rawEvents: number;
+  /** Turns with no resolvable cwd, so no project. Raw events still kept. */
   skipped: number;
+  /** Transcripts that failed entirely and were skipped. Must be surfaced. */
+  failed: number;
 }
 
 export class Ingestor {
