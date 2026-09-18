@@ -5,6 +5,7 @@ import { mkdtemp, open, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
+import { GeminiCliAdapter } from './adapters/gemini-cli.js';
 import type { AgentAdapter } from './adapters/types.js';
 import { loadConfig, type CollectorConfig } from './config.js';
 import { Db } from './db.js';
@@ -178,18 +179,32 @@ async function main(): Promise<void> {
 
   const ingestor = new Ingestor(db, config, redactor);
 
+  // Adapter registry. Adding an agent is one entry here plus one adapter file
+  // — no migration, no change to the ingest pipeline.
+  const codeRoots = config.pathMapper.entries.map((m) => m.containerPrefix);
+  const buildAdapter = (agentKey: string, home: string): AgentAdapter | null => {
+    switch (agentKey) {
+      case 'claude_code':
+        return new ClaudeCodeAdapter(home);
+      case 'gemini_cli':
+        return new GeminiCliAdapter(home, codeRoots, (p) => config.pathMapper.toHostIfMapped(p));
+      default:
+        return null;
+    }
+  };
+
   const adapters: { adapter: AgentAdapter; agentId: number }[] = [];
   for (const agentConfig of config.agents) {
     if (!agentConfig.enabled) continue;
-    if (agentConfig.key !== 'claude_code') {
+    const adapter = buildAdapter(agentConfig.key, agentConfig.home);
+    if (adapter === null) {
       // Enabled with no adapter: say so rather than silently ingesting nothing.
+      // Their transcript formats are unverified on this machine, and a parser
+      // written against a guessed schema is worse than no parser.
       log(`  WARNING: agent "${agentConfig.key}" is enabled but has no adapter yet — ignoring.`);
       continue;
     }
-    adapters.push({
-      adapter: new ClaudeCodeAdapter(agentConfig.home),
-      agentId: await db.getAgentId(agentConfig.key),
-    });
+    adapters.push({ adapter, agentId: await db.getAgentId(agentConfig.key) });
   }
   if (adapters.length === 0) throw new Error('No agent adapters enabled — nothing to collect.');
 
