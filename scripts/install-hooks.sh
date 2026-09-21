@@ -159,8 +159,11 @@ Done. Hooks post to ${ENDPOINT}
   Uninstall with:
     $(cd "$(dirname "$0")" && pwd)/install-hooks.sh --uninstall
 
-  NOTE: Claude Code reads settings.json at SESSION START, so hooks take effect
-  in your NEXT session, not the current one. (Verified on this machine.)
+  Hooks take effect IMMEDIATELY — settings.json is watched, not read once at
+  session start. Observed on this machine: hooks installed mid-session began
+  firing in the already-running session within about a minute. (An earlier note
+  here claimed the opposite, based on a probe that did not fire; that was
+  wrong.)
 
   Optional — Layer 3 proxy. These are printed, not written to your shell rc;
   paste them into the shell you launch the agent from:

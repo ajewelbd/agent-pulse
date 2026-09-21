@@ -262,10 +262,12 @@ These are reported, not fixed, and none blocks the dashboard.
 1. **No exit codes anywhere** — 8261 / 8261, and **the hook will not fix
    this**. Corrected after reading the shipped CLI's own schema: the Bash
    tool's result has stdout, stderr and interrupted but no exit status, so
-   `PostToolUse` cannot supply one. The exit code exists only on an
-   OpenTelemetry span, which would need a receiver this system does not have.
-   See [hook-payloads.md](hook-payloads.md). The banner and tooltip that told
-   you to run `make install-hooks` for exit codes were wrong and now say so.
+   `PostToolUse.tool_response` carries no exit status, and neither does the
+   OpenTelemetry span (the function that would set the attribute has an empty
+   body). Hooks are now installed, and exit codes turn out to be recoverable
+   from `PostToolUseFailure.error` — but only for calls captured from now on.
+   These 8261 predate hooks and can never be backfilled. See
+   [hook-payloads.md](hook-payloads.md).
 2. **Proxy correlation is untested against live agent traffic.** Nothing has
    been routed through `127.0.0.1:4318` yet, which is why all 445 turns show
    an inferred provider.

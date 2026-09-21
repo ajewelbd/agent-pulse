@@ -156,12 +156,19 @@ comparison. `/healthz` is unauthenticated (for the compose healthcheck) and
 reveals nothing.
 
 **Hook payloads are stored in `raw_events` verbatim and are not yet folded into
-turns.** I still cannot verify the `PostToolUse` payload shape: I installed a
-probe hook and it did not fire, because Claude Code reads `settings.json` at
-**session start**. So writing a parser now would mean guessing a schema — which
-is what the brief forbids. Storing every event loses nothing: once the real
-shape is known, the enrichment pass reads it back out of `raw_events`, including
-events captured in the meantime.
+turns.** At the time of Phase 3 the `PostToolUse` shape was unverified: a probe
+hook did not fire, which was attributed to Claude Code reading `settings.json`
+at session start. Writing a parser then would have meant guessing a schema, so
+every event is stored verbatim instead.
+
+> **Corrected 2026-09-21.** Both halves of that note turned out to be wrong.
+> The payload shape is now known (see [hook-payloads.md](hook-payloads.md)),
+> and settings.json is **watched, not read once** — hooks installed mid-session
+> began firing in the already-running session. Whatever stopped the original
+> probe, it was not session-start caching. Storing events verbatim was still
+> the right call: the live payload carries a `scratchpad_dir` field that is
+> absent from the compiled schema, so a projection written against the schema
+> alone would have dropped it.
 
 `make install-hooks` registers 9 events (PostToolUse, PostToolUseFailure,
 UserPromptSubmit, SessionStart, SessionEnd, Stop, PreCompact, PostCompact,

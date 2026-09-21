@@ -164,11 +164,16 @@ export interface ToolCall {
   /**
    * null means UNKNOWN, never success. Render null as "unknown".
    *
-   * Nothing this system can capture records it. Layer 1 transcripts omit it,
-   * and the PostToolUse hook does not carry it either — verified against the
-   * Bash tool's output schema in claude-code 2.1.278, which has stdout,
-   * stderr and interrupted but no exit status. The only source is the
-   * OpenTelemetry span `claude_code.bash.subprocess`. See
+   * Recoverable ONLY from Layer 2 hooks, and only for tool calls captured
+   * while hooks were installed:
+   *
+   *   PostToolUseFailure, error =~ /^Exit code (\d+)/  -> N   (observed)
+   *   PostToolUse, no returnCodeInterpretation         -> 0   (inferred)
+   *   PostToolUse, returnCodeInterpretation present    -> non-zero,
+   *                                                       value not stated
+   *
+   * `tool_response` itself carries no exit status, and transcripts carry
+   * none either, so historical rows can never be backfilled. See
    * docs/hook-payloads.md.
    */
   exitCode: number | null;

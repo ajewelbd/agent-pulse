@@ -7,6 +7,11 @@ cross-checked against `claude-code-settings.schema.json` in the same bundle.
 This replaces the "unverified, do not guess" note carried since Phase 1. It is
 read out of the running implementation, not from documentation or memory.
 
+**Since confirmed against live events.** Hooks were installed on 2026-09-21 and
+real `PostToolUse` and `PreCompact` payloads captured. Everything below held.
+See §"Confirmed against live events" at the end for the observed field sets and
+two corrections the live data forced.
+
 ---
 
 ## The headline: PostToolUse does NOT carry exit codes
@@ -46,25 +51,56 @@ So `make install-hooks` would have been run, a new session started, and the
 exit-code column would still have been empty, with the dashboard still telling
 the user to install the hook.
 
-## Where the exit code actually goes
+## Where the exit code goes: nowhere
 
-One place: an OpenTelemetry span.
+My first pass through the binary said the exit code lands on an OpenTelemetry
+span, and recommended building an OTLP receiver to collect it. **That was
+wrong too**, and it is worth recording how, because the mistake is the same
+shape as the original one: reading a call site and assuming the callee does
+what its arguments suggest.
 
+The Bash tool does this when the subprocess resolves:
+
+```js
+SGt(To, { exit_code: Ki.code, stdout_bytes: …, stderr_bytes: …,
+          interrupted: Ki.interrupted, …})
 ```
-span: claude_code.bash.subprocess
-attrs: shell.type, command_length, timeout_ms
-       exit_code, stdout_bytes, stderr_bytes, interrupted, backgrounded
-content attrs: command
+
+That looks decisive. But `SGt` is:
+
+```js
+function SGt(n, e) { return }
 ```
 
-The relevant env vars are all present in the binary:
-`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
-`OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`,
-`OTEL_LOGS_EXPORTER`, `OTEL_EXPORTER_OTLP_HEADERS`.
+An empty body. There is exactly **one** definition of `SGt` in the whole
+217 MB binary and four call sites, two of them the ones above. The attributes
+are computed and thrown away, so `exit_code` never reaches the span, and an
+OTLP receiver would collect a span carrying `shell.type`, `command_length` and
+`timeout_ms` — and no exit status.
 
-**This is unbuilt.** Capturing it means an OTLP receiver — a Layer 4 — and it
-is not in the current system. Until then `tool_calls.exit_code` stays NULL and
-the dashboard must keep saying "unknown" rather than 0.
+The exit code escapes the Bash tool in exactly two ways in 2.1.278:
+
+1. Into Anthropic's own analytics event
+   (`tengu_bash_tool_command_executed`, field `exit_code`), which is not an
+   OTLP export and is not user-collectable.
+2. Into the span **status message**, and only when the command was
+   interrupted: `F8e(To, \`interrupted (exit ${Ki.code})\`)`. `F8e` is real
+   (`n.setStatus(…)`). So an OTLP receiver would recover an exit code for
+   interrupted commands only, out of a human-readable string.
+
+That was my conclusion for about ten minutes, and it was also wrong — see
+"Exit codes are recoverable after all" below. It is right only about OTLP: an
+OTLP receiver would not deliver exit codes. The route is hooks, just not the
+field everyone assumed.
+
+A Layer 4 OTLP receiver may still be worth building for other signals —
+`claude_code.subagent.spawn` carries `agent_id`/`parent_agent_id`, spans carry
+real wall-clock durations and `gen_ai.tool.call.id`, and Claude Code exports
+token/cost metrics. The relevant env vars are all present
+(`CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_PROTOCOL` — `http/json` is supported, so no protobuf
+decoding would be needed). But it must not be sold as the fix for exit codes,
+because it is not one.
 
 The join key is documented in the payload itself. `prompt_id` on every hook
 event is described as:
@@ -199,17 +235,111 @@ backticks never reach a shell parser.
 
 ---
 
+## Confirmed against live events
+
+Hooks installed 2026-09-21; payloads below are real, captured from this
+machine, not synthetic.
+
+**`tool_response` contains exactly five fields**, across every observed
+`PostToolUse`:
+
+```
+interrupted   isImage   noOutputExpected   stderr   stdout
+```
+
+No exit code. A scan of every captured hook payload for `exit_?code`
+(case-insensitive) returns **zero** matches. The finding read from the schema
+is confirmed by observation.
+
+Observed top-level fields, with the number of events carrying each:
+
+```
+cwd 5   hook_event_name 5   prompt_id 5   scratchpad_dir 5
+session_id 5   transcript_path 5
+duration_ms 4   effort 4   permission_mode 4
+tool_input 4   tool_name 4   tool_response 4   tool_use_id 4
+custom_instructions 1   trigger 1        (these two from PreCompact)
+```
+
+`duration_ms` is present on every tool event, not optional in practice — one
+observed value was 1158 ms. `tool_use_id` likewise (`toolu_011nRsDe5tjx…`), so
+the exact-join-key plan is sound. `effort` arrived as `{"level":"high"}`.
+
+### Two corrections the live data forced
+
+**1. `scratchpad_dir` is not in the compiled schema.** It appears on every
+observed event, carrying the session's scratchpad path. Reading the schema
+alone would have missed it — a reminder that the schema is a lower bound on
+what actually arrives, which is exactly why the receiver stores payloads
+verbatim instead of projecting them into columns.
+
+**2. Hooks take effect immediately, NOT at session start.** The installer, and
+the Phase 3 notes, said settings.json is read only at session start and cited
+a probe that did not fire. That is wrong: hooks installed mid-session began
+firing within about a minute, in the session that was already running. The
+event enum includes `ConfigChange`, which is consistent with settings being
+watched rather than read once. The earlier probe presumably failed for another
+reason.
+
+`agent_id` was absent throughout, consistent with its documented meaning — all
+observed events came from the main thread, not a subagent.
+
+## Exit codes are recoverable after all
+
+Found by installing hooks and running deliberate probes, after three earlier
+conclusions about this column were wrong. Observed, on this machine:
+
+| Command | Event fired | What carries the code |
+|---|---|---|
+| `bash -c 'exit 42'` | **PostToolUseFailure** | `error` = `"Exit code 42\n…"` |
+| `grep` with no match (exit 1) | PostToolUse | `tool_response.returnCodeInterpretation` = `"No matches found"` |
+| ordinary success | PostToolUse | neither field present |
+
+So the exit code is never a numeric field — but for *failing* commands it is
+stated verbatim at the start of the `error` string, which is a reliable parse.
+
+### The derivation rule
+
+```
+PostToolUseFailure, error =~ ^Exit code (\d+)   -> exit_code = N   OBSERVED
+PostToolUse, no returnCodeInterpretation        -> exit_code = 0   INFERRED
+PostToolUse, returnCodeInterpretation present   -> non-zero, value
+                                                   not stated -> NULL
+```
+
+The middle rule is inference, not observation. It rests on the tool raising
+`PostToolUseFailure` for every genuine non-zero exit, and on
+`returnCodeInterpretation` existing precisely to mark a "non-error exit code
+with special meaning" — its own schema description. It held across every
+observed event, but it is a claim about the agent's behaviour rather than a
+value the agent reported, and it should be labelled as such wherever it is
+surfaced.
+
+The third bucket stays NULL deliberately. `grep` finding nothing is exit 1 in
+practice, but recovering that number would mean mapping interpretation strings
+to codes per tool — a guess, and a guessed exit code is worse than an absent
+one.
+
+### What this does not fix
+
+**The 8261 historical tool calls stay NULL forever.** They predate hooks, and
+transcripts never carried the code. This is not a backfill that has yet to be
+run; it is impossible. Only tool calls captured while hooks are installed can
+ever have an exit code.
+
+The enrichment pass that applies this rule is application code and is **not
+yet written**. Hook events are being captured verbatim in `raw_events` in the
+meantime, so nothing is lost by the delay.
+
 ## Still not verified
 
-The schema is authoritative for **shape**. What it cannot tell us:
-
 - Whether a non-zero-exit Bash command fires `PostToolUse` or
-  `PostToolUseFailure` in practice. The schema strongly implies `PostToolUse`
-  (a command that runs and exits 1 has not failed as a *tool*), but that is
-  inference, not observation.
-- What `returnCodeInterpretation` actually contains, and for which exit codes.
-- Whether `duration_ms` is present in practice or usually omitted.
+  `PostToolUseFailure`. The schema implies `PostToolUse` (a command that runs
+  and exits 1 has not failed as a *tool*), and no `PostToolUseFailure` has been
+  observed yet. Still inference.
+- What `returnCodeInterpretation` contains, and for which exit codes. It has
+  not appeared in any observed `tool_response`.
+- `agent_id` / `agent_type` in practice, which needs a subagent invocation.
 
-Answering these needs one real session with hooks installed. Nothing above
-depends on it: the exit-code finding comes from the output schema itself,
-which lists every field the tool can return.
+None of these affects the exit-code conclusion, which is now confirmed from
+both the schema and live data.

@@ -47,7 +47,7 @@ export function HealthBanner({ health }: { health: HealthRow | null }) {
     items.push({
       label: `${num(tools - withExit)} of ${num(tools)} commands have no exit code`,
       detail:
-        'Nothing this system can currently capture records them. Agent transcripts omit them, and the PostToolUse hook does not carry one either — the Bash tool’s result has stdout, stderr and interrupted, but no exit status. The only source is an OpenTelemetry span, which would need a receiver this system does not have. See docs/hook-payloads.md.',
+        'Transcripts never recorded it, so these can never be backfilled. Going forward it is recoverable from Layer 2 hooks — a failing command states it in the hook\u2019s error text — but the enrichment pass that applies that is not written yet. Hook events are being captured meanwhile, so nothing is being lost. See docs/hook-payloads.md.',
     });
   }
 
