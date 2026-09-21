@@ -180,10 +180,9 @@ Hyphen matching is now opt-in per rule, because a blanket version would make
    single highest-value unknown: it is the only route to real shell exit codes.
    `make install-hooks`, start a **new** session, run a command, then send me
    `SELECT payload FROM raw_events WHERE layer='hooks' LIMIT 3;`.
-2. **Proxy correlation is untested against live agent traffic.** It has been
-   verified against a fake upstream and seeded rows, but not yet with a real
-   agent pointed at `ANTHROPIC_BASE_URL`. Worth one real session before trusting
-   `provider_source='proxy'` in reporting.
+2. **Proxy correlation** — now verified end to end; see below. Still not
+   exercised by a real agent pointed at `ANTHROPIC_BASE_URL`, which is the one
+   remaining gap.
 3. **Sub-agent token double-counting** (carried from Phase 3): sidechain
    sessions have their own turns while the parent's summary reports the same
    totals. The parent summary is in `raw_events` only, so nothing is wrong
@@ -194,3 +193,71 @@ Hyphen matching is now opt-in per rule, because a blanket version would make
 
 Turn list (filters + full-text search, no diff bodies), turn detail (rendered
 markdown, command timeline, collapsible diffs), and aggregates.
+
+---
+
+# Addendum — end-to-end proxy verification (2026-09-21)
+
+Run against a throwaway database and a mock upstream given the Docker network
+alias `api.anthropic.com`, so host-based provider attribution ran for real
+rather than being stubbed. The live stack and its 445 turns were untouched;
+all test containers and the test database were dropped afterwards.
+
+## Passthrough — the proxy must never break the agent
+
+| Case | Result |
+|---|---|
+| Non-streaming 200 | forwarded intact, usage extracted |
+| SSE stream | 5 events, client received `message_stop` — teed, not buffered |
+| Upstream 429 | status and error body passed through unchanged |
+| Credentials | forwarded upstream (agent works), `[REDACTED]` in storage |
+| `/_u/<name>` routing | 200 |
+| Unknown `/_u/` name | 502 naming the fix |
+| Unreachable upstream | 502 to the agent, proxy stayed up, failure recorded |
+
+## Usage extraction
+
+| | input | output | cache read | 5m write | 1h write |
+|---|---|---|---|---|---|
+| non-streaming | 1200 | 340 | 45000 | 800 | 0 |
+| streaming | 500 | **777** | 12000 | 1500 | 500 |
+
+The streaming output figure is the one that matters: `message_delta` carries a
+**running total**, not an increment, and 777 is the final value rather than a
+sum with the `message_start` value of 1. Requests with no usage block were
+recorded `token_source='unknown'` with NULL counts — absence, not zero.
+
+`/_u/openrouter` was recorded as `anthropic` because the alias pointed at
+`api.anthropic.com`. That is correct by design: the **host** is the fact, the
+route label is not.
+
+## Correlation and precedence
+
+Seeded two turns in the same window, then ran the real `Reconciler`:
+
+| turn | before | after | check |
+|---|---|---|---|
+| A | `model_map`, tokens 999/111 from logs | `proxy`, **tokens still 999/111** | provider wins, tokens fill gaps only |
+| B | `unknown`, no tokens | `proxy`, tokens 500/777/12000 | the gap-fill case Layer 3 exists for |
+
+Turn A is the important row. Wholesale "last layer wins" would have replaced
+provider-reported counts with proxy-observed ones and made the two
+indistinguishable; it did not.
+
+All four `match_method` states were exercised:
+
+- `model_time_window` — unique candidate, matched.
+- `ambiguous` — a second turn on the same model in the same window made 4
+  observations ambiguous. All were left unattributed and the new turn stayed
+  `unknown`/`unknown`. **It refused to guess**, which is the point: a wrong
+  attribution is indistinguishable from a right one afterwards.
+- `no_candidate` — an observation backdated past the 30-minute grace was
+  abandoned.
+- `pending` — held while a turn could still appear.
+
+Running the reconciler twice returned all zeros the second time — idempotent.
+
+## What this run also found
+
+Two leaks in the redaction pattern set, fixed and version-bumped to 2. See
+[redaction.md](redaction.md).

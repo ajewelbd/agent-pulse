@@ -109,14 +109,42 @@ export class Db {
     patternHash: string,
     patternCount: number,
   ): Promise<void> {
+    // DO NOTHING, never DO UPDATE. Overwriting the hash of an existing version
+    // rewrites history: every row already stamped with it would then claim a
+    // pattern set that was never applied to its content. If the patterns
+    // changed, the version must change — so a mismatch is a startup error, not
+    // something to paper over.
     await this.pool.query(
       `INSERT INTO redaction_versions (version, pattern_hash, pattern_count, description)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (version) DO UPDATE
-         SET pattern_hash = EXCLUDED.pattern_hash,
-             pattern_count = EXCLUDED.pattern_count`,
+       ON CONFLICT (version) DO NOTHING`,
       [version, patternHash, patternCount, `collector pattern set ${patternHash}`],
     );
+    await this.assertRedactionVersionMatches(version, patternHash);
+  }
+
+  /**
+   * Refuse to run if this version already exists under a different pattern set.
+   *
+   * Without this, editing DEFAULT_PATTERNS and forgetting to bump the version
+   * is invisible: new rows and old rows both say "version N" while having been
+   * written by two different pattern sets, and there is no way afterwards to
+   * tell which content was covered by which.
+   */
+  private async assertRedactionVersionMatches(version: number, patternHash: string): Promise<void> {
+    const { rows } = await this.pool.query<{ pattern_hash: string }>(
+      `SELECT pattern_hash FROM redaction_versions WHERE version = $1`,
+      [version],
+    );
+    const stored = rows[0]?.pattern_hash;
+    if (stored !== undefined && stored !== patternHash) {
+      throw new Error(
+        `Redaction version ${version} is already recorded with pattern hash ${stored}, ` +
+          `but the live pattern set hashes to ${patternHash}. The patterns changed without ` +
+          `a version bump — rows written under both would be indistinguishable. ` +
+          `Increment Redactor.version in packages/schema/src/redaction.ts.`,
+      );
+    }
   }
 
   /** Resolve provider by longest matching model prefix (the weakest rule). */

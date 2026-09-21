@@ -58,14 +58,31 @@ export class ProxyDb {
     await this.pool.end();
   }
 
+  /**
+   * DO NOTHING, never DO UPDATE — see the collector's copy for the reasoning.
+   * Overwriting an existing version's hash rewrites history for every row
+   * already stamped with it, so a mismatch is a startup error instead.
+   */
   async registerRedactionVersion(version: number, hash: string, count: number): Promise<void> {
     await this.pool.query(
       `INSERT INTO redaction_versions (version, pattern_hash, pattern_count, description)
        VALUES ($1,$2,$3,$4)
-       ON CONFLICT (version) DO UPDATE
-         SET pattern_hash = EXCLUDED.pattern_hash, pattern_count = EXCLUDED.pattern_count`,
+       ON CONFLICT (version) DO NOTHING`,
       [version, hash, count, `proxy pattern set ${hash}`],
     );
+    const { rows } = await this.pool.query<{ pattern_hash: string }>(
+      `SELECT pattern_hash FROM redaction_versions WHERE version = $1`,
+      [version],
+    );
+    const stored = rows[0]?.pattern_hash;
+    if (stored !== undefined && stored !== hash) {
+      throw new Error(
+        `Redaction version ${version} is already recorded with pattern hash ${stored}, ` +
+          `but the live pattern set hashes to ${hash}. The patterns changed without a ` +
+          `version bump — rows written under both would be indistinguishable. ` +
+          `Increment Redactor.version in packages/schema/src/redaction.ts.`,
+      );
+    }
   }
 
   private async providerId(key: string): Promise<number> {
