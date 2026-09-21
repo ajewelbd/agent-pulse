@@ -31,3 +31,15 @@ services:
     volumes:
       - ./packages/schema/migrations:/app/packages/schema/migrations
       - ./packages/schema/src:/app/packages/schema/src
+
+  web:
+    build:
+      target: builder
+    environment:
+      NODE_ENV: development
+    command: ["pnpm", "--filter", "@aiuo/web", "run", "dev"]
+    volumes:
+      - ./apps/web/src:/app/apps/web/src
+      # Anonymous volume so the container's own .next is never clobbered by a
+      # host build, and a host `next build` is never clobbered by the container.
+      - /app/apps/web/.next

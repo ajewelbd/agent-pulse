@@ -1,4 +1,4 @@
-.PHONY: help uid up down dev logs migrate migrate-status backup install-hooks uninstall-hooks test typecheck build clean
+.PHONY: help uid up down dev web web-dev logs migrate migrate-status backup install-hooks uninstall-hooks test typecheck build clean
 
 COMPOSE := docker compose
 DEV     := $(COMPOSE) -f compose.yaml -f compose.dev.yaml
@@ -21,6 +21,14 @@ up: ## Start postgres + migrate + collector
 
 dev: ## Start with source bind-mounts and hot reload
 	$(DEV) up --build
+
+web: ## Start the dashboard too (read-only) at http://127.0.0.1:3000
+	$(COMPOSE) --profile phase5 up -d --build
+	@echo ""
+	@echo "dashboard: http://127.0.0.1:3000"
+
+web-dev: ## Dashboard with hot reload
+	$(DEV) --profile phase5 up --build web
 
 down: ## Stop everything. Keeps your data.
 	$(COMPOSE) down
