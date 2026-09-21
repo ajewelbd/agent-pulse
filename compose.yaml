@@ -24,8 +24,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-aiuo}
     ports:
-      # 5433 on the host so this never collides with a local postgres on 5432.
-      - "127.0.0.1:5433:5432"
+      # Configurable, because a hard-coded host port is a collision waiting to
+      # happen: this machine already had a native postgres on 5433. The
+      # CONTAINER side stays 5432 — only the host side moves.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Backup target. `make backup` writes a pg_dump custom-format file here.
@@ -84,15 +86,22 @@ services:
       AGENT_COPILOT_CLI_ENABLED: ${AGENT_COPILOT_CLI_ENABLED:-false}
       AGENT_GEMINI_CLI_ENABLED: ${AGENT_GEMINI_CLI_ENABLED:-false}
     ports:
-      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:${COLLECTOR_HOST_PORT:-4317}:4317"
     volumes:
       # ALL HOST MOUNTS ARE READ-ONLY. The collector must never write to your
       # repos or to an agent's config directory.
+      # The agent home needs a PATH_MAP entry of its own, not just the code
+      # roots: checkpoints are keyed on the transcript's HOST path and the
+      # database rejects /host/... outright. Startup asserts this.
       - ${CLAUDE_HOME:-~/.claude}:/host/agents/claude:ro
       # Code roots. These paths must line up with PATH_MAP or startup fails
       # loudly — a missing mount must not degrade to "zero turns found".
       - ${CODE_ROOT_1:?set CODE_ROOT_1 in .env}:/host/code/root1:ro
-      # Add CODE_ROOT_2… here as needed, with a matching PATH_MAP entry.
+      # Required rather than defaulted: there is no safe placeholder for a
+      # bind-mount source, and a wrong one mounts the wrong tree read-only
+      # under a name the mapper trusts. Delete this line if you have one root.
+      - ${CODE_ROOT_2:?set CODE_ROOT_2 in .env, or delete this mount line}:/host/code/root2:ro
+      # Add CODE_ROOT_3… here as needed, with a matching PATH_MAP entry.
       # Checkpoints live in Postgres (see docs/schema.md), so no named volume
       # is needed here for offsets — pgdata carries them.
     depends_on:
@@ -119,7 +128,7 @@ services:
       PROXY_MAX_STORED_BODY_BYTES: ${PROXY_MAX_STORED_BODY_BYTES:-65536}
       REDACTION_DISABLED: ${REDACTION_DISABLED:-false}
     ports:
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:${PROXY_HOST_PORT:-4318}:4318"
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,7 +148,7 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
       NODE_ENV: production
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${WEB_HOST_PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
