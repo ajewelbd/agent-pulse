@@ -44,6 +44,22 @@ async function assertMounts(config: CollectorConfig): Promise<void> {
     }
   }
 
+  // An agent's OWN home must be in PATH_MAP too, not just the code roots.
+  // Every checkpoint is keyed on the transcript's host path, and the database
+  // refuses a /host/... path outright. Without a mapping the collector starts
+  // clean, then fails on every single transcript with a constraint violation
+  // that names the table rather than the missing config line.
+  for (const agent of config.agents) {
+    if (!agent.enabled) continue;
+    if (config.pathMapper.toHostIfMapped(agent.home).startsWith('/host/')) {
+      problems.push(
+        `${agent.key}: ${agent.home} is mounted but has no PATH_MAP entry, so its transcript ` +
+          `paths cannot be translated back to host paths and no checkpoint can be stored. ` +
+          `Add "<host agent dir>:${agent.home}" to PATH_MAP.`,
+      );
+    }
+  }
+
   for (const mapping of config.pathMapper.entries) {
     try {
       const st = await stat(mapping.containerPrefix);
