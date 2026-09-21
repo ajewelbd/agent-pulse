@@ -33,7 +33,7 @@ export function CommandTimeline({ calls }: { calls: ToolCallRow[] }) {
             <span className="text-sm font-medium">{c.tool_name}</span>
 
             {c.exit_code === null ? (
-              <Chip tone="warn" title="Agent transcripts do not record exit codes. Install the PostToolUse hook to capture them.">
+              <Chip tone="warn" title="No exit code was captured, and none currently can be: transcripts omit it and the PostToolUse hook does not carry one. It exists only on an OpenTelemetry span. Never read this as exit 0.">
                 exit unknown
               </Chip>
             ) : c.exit_code === 0 ? (

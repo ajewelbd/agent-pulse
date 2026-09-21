@@ -59,8 +59,14 @@ if os.path.exists(path):
 
 hooks = settings.get("hooks", {})
 
-# Events worth capturing. PostToolUse is the important one: it is the only
-# source of real shell exit codes, which Layer 1 transcripts never record.
+# Events worth capturing. All nine are valid names, checked against the enum in
+# the CLI's own claude-code-settings.schema.json.
+#
+# PostToolUse does NOT give exit codes — that claim was wrong and is corrected
+# in docs/hook-payloads.md. What it does give, and what makes installing these
+# worthwhile: duration_ms (a real measurement rather than the upper bound
+# derived from transcript timestamps), tool_use_id (an exact join key), and
+# agent_id (present only inside a subagent).
 EVENTS = {
     "PostToolUse":      "",
     "PostToolUseFailure": "",

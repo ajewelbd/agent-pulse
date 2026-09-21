@@ -200,10 +200,11 @@ changes, 1,477 diffs, 36,558 raw events, 11 projects, 22 sessions**, in ~13s.
 
 ## Open, and worth your attention
 
-1. **The `PostToolUse` payload is still unverified.** Run `make install-hooks`,
-   start a **new** Claude Code session, run any command, then send me
-   `SELECT payload FROM raw_events WHERE layer='hooks' LIMIT 3;`. That unlocks
-   real exit codes and measured durations.
+1. **The `PostToolUse` payload** — since verified by reading the schema
+   compiled into claude-code 2.1.278; see [hook-payloads.md](hook-payloads.md).
+   It unlocks measured durations, but **not** exit codes: the sentence above
+   claiming otherwise was written from assumption, and the Bash tool result
+   has no exit status field at all.
 
 2. **Sanity-check the cost figures.** Backfill totals ~$4.4k across 439 turns.
    The arithmetic is consistent (cache reads dominate — one turn read 23.5M

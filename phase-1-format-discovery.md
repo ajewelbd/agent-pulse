@@ -318,6 +318,13 @@ Hook entries support `matcher`, `if` (permission-rule filter, e.g.
 `Bash(git *)`), `command`, `args` (exec form, no shell — the safe choice for a
 collector hook), and `shell`.
 
+> **Correction (2026-09-21).** The line below is wrong, and it is the
+> assumption that propagated through Phases 3–5. `PostToolUse` does **not**
+> carry exit codes: the Bash tool's result schema has stdout, stderr and
+> interrupted but no exit status. Verified by reading the schema compiled into
+> claude-code 2.1.278 — see [docs/hook-payloads.md](docs/hook-payloads.md).
+> What `PostToolUse` does give is a measured `duration_ms` and a `tool_use_id`.
+
 The ones that matter here: `PostToolUse` (exit codes), `UserPromptSubmit` (turn
 start), `Stop` (turn end), `SessionStart` (base URL capture), `PreCompact` /
 `PostCompact` (the spec's compaction edge case), `PreModelSwitch` /

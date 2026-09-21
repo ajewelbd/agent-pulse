@@ -176,10 +176,10 @@ Hyphen matching is now opt-in per rule, because a blanket version would make
 
 ## Still open
 
-1. **The `PostToolUse` hook payload.** Unchanged from Phase 3, and still the
-   single highest-value unknown: it is the only route to real shell exit codes.
-   `make install-hooks`, start a **new** session, run a command, then send me
-   `SELECT payload FROM raw_events WHERE layer='hooks' LIMIT 3;`.
+1. **The `PostToolUse` hook payload** — now verified from the shipped CLI's
+   compiled schema, see [hook-payloads.md](hook-payloads.md). It is **not** a
+   route to exit codes; that claim was wrong. It does carry a real `duration_ms`
+   and an exact `tool_use_id`, which is worth having.
 2. **Proxy correlation** — now verified end to end; see below. Still not
    exercised by a real agent pointed at `ANTHROPIC_BASE_URL`, which is the one
    remaining gap.

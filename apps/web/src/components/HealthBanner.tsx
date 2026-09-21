@@ -47,7 +47,7 @@ export function HealthBanner({ health }: { health: HealthRow | null }) {
     items.push({
       label: `${num(tools - withExit)} of ${num(tools)} commands have no exit code`,
       detail:
-        'Agent transcripts do not record exit codes. Only the PostToolUse hook can supply them — run `make install-hooks` and start a new agent session.',
+        'Nothing this system can currently capture records them. Agent transcripts omit them, and the PostToolUse hook does not carry one either — the Bash tool’s result has stdout, stderr and interrupted, but no exit status. The only source is an OpenTelemetry span, which would need a receiver this system does not have. See docs/hook-payloads.md.',
     });
   }
 

@@ -280,8 +280,12 @@ changed the schema, which is agent-agnostic — they change Phase 3.
 
 1. **Scope.** Schema supports all six agents; only `claude_code` has a verified
    format. `agents` rows for the others carry a note saying so.
-2. **`PostToolUse` payload.** `exit_code` and a `reported` `duration_source`
-   are modelled but unpopulated until the hook payload is confirmed.
+2. **`PostToolUse` payload.** `duration_source='reported'` is unpopulated
+   until hooks are installed. `exit_code` is unpopulated *permanently* on
+   current capture layers — the hook carries no exit status (verified; see
+   [hook-payloads.md](hook-payloads.md) and migration 011). The column stays,
+   because NULL-means-unknown is still the right model and an OTLP receiver
+   would fill it.
 3. **Code roots.** No `PATH_MAP` default is committed; `.env.example` shows the
    shape using the two roots visible in your transcripts.
 

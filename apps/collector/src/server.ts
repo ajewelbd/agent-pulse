@@ -8,11 +8,20 @@
  * or (worse) read it back.
  *
  * Hook payloads land in raw_events verbatim and are NOT yet folded into turns.
- * The Claude Code PostToolUse payload shape is unverified on this machine —
- * the hook did not fire mid-session, since settings are read at session start.
- * Rather than guess a schema and write a parser against it, every event is
- * stored for replay; once the real shape is known, the enrichment pass reads
- * it back out of raw_events with no data lost in the meantime.
+ * Storing them unparsed was the right call and still is: the payload shape is
+ * now known (docs/hook-payloads.md, read out of claude-code 2.1.278) and it
+ * does NOT contain what the enrichment pass was going to be written for.
+ * PostToolUse carries no exit code — that lives only on an OpenTelemetry span.
+ *
+ * What it does carry and an enrichment pass could use: `duration_ms` (a real
+ * measurement, excluding permission-prompt and hook time, unlike the derived
+ * upper bound Layer 1 gives), `tool_use_id` (an exact join key instead of
+ * heuristic matching), and `agent_id` (present only inside a subagent, which
+ * is the clean answer to sub-agent double counting).
+ *
+ * One trap for whoever writes that pass: PostToolUse "may run concurrently for
+ * parallel tool calls" per its own schema description, so events must not be
+ * assumed to arrive in tool order. Sequence from the payload, not arrival.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';

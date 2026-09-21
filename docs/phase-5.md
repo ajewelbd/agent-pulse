@@ -62,11 +62,16 @@ both pages and lists the structural gaps, each with the action that closes it:
 |---|---|---|
 | Inferred provider | 445 / 445 | Route the agent through the proxy |
 | Unpriced turns | 14 | Add rows to `model_pricing` |
-| Commands with no exit code | 8261 / 8261 | `make install-hooks` |
+| Commands with no exit code | 8261 / 8261 | nothing — see below |
 | Turns with no token counts | 14 | — |
 
 A dashboard that renders only what it knows quietly implies it knows
 everything. This one says otherwise, up front.
+
+The exit-code row originally read `make install-hooks`. That was wrong — the
+hook carries no exit status — and the banner now says so instead of sending
+you to a fix that would not have worked. See
+[hook-payloads.md](hook-payloads.md).
 
 ### Provider attribution is shown with its source
 
@@ -254,12 +259,13 @@ make web-dev      # dashboard with hot reload
 
 These are reported, not fixed, and none blocks the dashboard.
 
-1. **No exit codes anywhere** — 8261 / 8261. Only the `PostToolUse` hook can
-   supply them. `make install-hooks` is written and idempotent, but Claude
-   Code reads `settings.json` at session start, so it takes effect on the next
-   session and has not yet been observed producing rows. The payload shape is
-   therefore still unverified — I have not confirmed what fields the hook
-   actually delivers.
+1. **No exit codes anywhere** — 8261 / 8261, and **the hook will not fix
+   this**. Corrected after reading the shipped CLI's own schema: the Bash
+   tool's result has stdout, stderr and interrupted but no exit status, so
+   `PostToolUse` cannot supply one. The exit code exists only on an
+   OpenTelemetry span, which would need a receiver this system does not have.
+   See [hook-payloads.md](hook-payloads.md). The banner and tooltip that told
+   you to run `make install-hooks` for exit codes were wrong and now say so.
 2. **Proxy correlation is untested against live agent traffic.** Nothing has
    been routed through `127.0.0.1:4318` yet, which is why all 445 turns show
    an inferred provider.

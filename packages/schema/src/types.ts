@@ -162,8 +162,14 @@ export interface ToolCall {
   command: string | null;
   cwd: string | null;
   /**
-   * null means UNKNOWN, not success. Layer 1 transcripts record no exit codes —
-   * only the PostToolUse hook can supply them. Render null as "unknown".
+   * null means UNKNOWN, never success. Render null as "unknown".
+   *
+   * Nothing this system can capture records it. Layer 1 transcripts omit it,
+   * and the PostToolUse hook does not carry it either — verified against the
+   * Bash tool's output schema in claude-code 2.1.278, which has stdout,
+   * stderr and interrupted but no exit status. The only source is the
+   * OpenTelemetry span `claude_code.bash.subprocess`. See
+   * docs/hook-payloads.md.
    */
   exitCode: number | null;
   stdoutExcerpt: string | null;
