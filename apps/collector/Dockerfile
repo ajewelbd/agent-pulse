@@ -9,7 +9,12 @@ RUN corepack enable && pnpm install --no-frozen-lockfile
 
 COPY packages/schema packages/schema
 COPY apps/collector apps/collector
-RUN pnpm --filter @aiuo/collector run build
+# The trailing "..." selects @aiuo/collector AND its workspace dependencies,
+# built in topological order. Without it only the collector is built, and its
+# import of @aiuo/schema/redaction resolves to a dist/ this image never
+# produced — which used to succeed only because an unignored host build got
+# copied in.
+RUN pnpm --filter "@aiuo/collector..." run build
 
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime
@@ -35,7 +40,10 @@ RUN if ! getent group "${HOST_GID}" >/dev/null; then groupadd -g "${HOST_GID}" a
 ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 
+# The per-package node_modules carries pnpm's symlinks (pg, @aiuo/schema);
+# the root one carries the store they point into. Both are needed.
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/apps/collector/node_modules ./apps/collector/node_modules
 COPY --from=builder /app/apps/collector/dist ./apps/collector/dist
 COPY --from=builder /app/apps/collector/package.json ./apps/collector/
 COPY --from=builder /app/packages/schema ./packages/schema

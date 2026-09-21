@@ -16,7 +16,12 @@ FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 
+# Both halves are required. The root node_modules holds pnpm's content store
+# (.pnpm/…); the per-package node_modules holds the SYMLINKS that make `pg`
+# resolvable from packages/schema. Copying only the root gives you an image
+# that starts and then dies on ERR_MODULE_NOT_FOUND.
 COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages/schema/node_modules ./packages/schema/node_modules
 COPY --from=builder /app/packages/schema/dist ./packages/schema/dist
 COPY --from=builder /app/packages/schema/migrations ./packages/schema/migrations
 COPY --from=builder /app/packages/schema/package.json ./packages/schema/

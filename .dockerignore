@@ -1,0 +1,25 @@
+# Keep the build context small and hermetic.
+#
+# node_modules is the big one: without this, `docker build` uploads the whole
+# host install — including pnpm's symlink farm, which does not survive the
+# transfer and produces dependency trees that differ from a clean install.
+node_modules
+**/node_modules
+
+# Build output. Copying a host .next into the image is how you ship a bundle
+# built against the wrong platform.
+**/dist
+**/.next
+**/*.tsbuildinfo
+
+.git
+.gitignore
+backups
+docs
+*.md
+
+# Secrets must never enter an image layer. .env is read by compose on the HOST
+# and injected as environment; it has no business in the build context.
+.env
+.env.*
+!.env.example
