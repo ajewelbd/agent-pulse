@@ -27,6 +27,8 @@ export interface TurnListRow extends Record<string, unknown> {
   project_name: string;
   project_path: string;
   agent_key: string;
+  /** The agent's own session id (a UUID for Claude Code). NOT NULL in the schema. */
+  external_session_id: string;
   provider_key: string | null;
   provider_source: string;
   model_raw: string | null;
@@ -108,7 +110,7 @@ export async function listTurns(
   const rows = await query<TurnListRow>(
     `SELECT t.id, t.seq,
             p.name AS project_name, p.path AS project_path,
-            a.key AS agent_key,
+            a.key AS agent_key, s.external_session_id,
             pr.key AS provider_key, t.provider_source,
             t.model_raw, t.model_normalized, t.git_branch,
             t.started_at, t.ended_at, t.duration_ms, t.status,
@@ -120,6 +122,7 @@ export async function listTurns(
        FROM turns t
        JOIN projects p ON p.id = t.project_id
        JOIN agents a   ON a.id = t.agent_id
+       JOIN sessions s ON s.id = t.session_id
        LEFT JOIN providers pr ON pr.id = t.provider_id
        ${where}
       ORDER BY t.started_at DESC, t.id DESC

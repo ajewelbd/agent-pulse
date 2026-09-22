@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { TurnFiltersBar } from '@/components/TurnFilters';
 import { CostChip, ProviderChip, StatusChip, TokenSourceChip } from '@/components/Chips';
 import { HealthBanner } from '@/components/HealthBanner';
-import { compactNum, cost, duration, utcShort } from '@/lib/format';
+import { compactNum, cost, duration, shortId, utcShort } from '@/lib/format';
 import { countTurns, getFilterOptions, getHealth, listTurns, type TurnFilters } from '@/lib/queries';
 
 export const dynamic = 'force-dynamic';
@@ -55,11 +55,12 @@ export default async function TurnListPage({
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[--color-line]">
-          <table className="w-full min-w-[1100px] text-sm">
+          <table className="w-full min-w-[1220px] text-sm">
             <thead className="bg-[--color-surface-2] text-left text-[11px] uppercase tracking-wide text-[--color-ink-2]">
               <tr>
                 <th className="px-3 py-2 font-medium">Started (UTC)</th>
                 <th className="px-3 py-2 font-medium">Project</th>
+                <th className="px-3 py-2 font-medium">Session</th>
                 <th className="px-3 py-2 font-medium">Prompt</th>
                 <th className="px-3 py-2 font-medium">Model</th>
                 <th className="px-3 py-2 text-right font-medium">In</th>
@@ -89,6 +90,17 @@ export default async function TurnListPage({
                         {t.git_branch}
                       </div>
                     )}
+                  </td>
+                  {/*
+                    Truncated for width only — the full id is in the title, and it
+                    is what names the agent's own transcript file, so it is the
+                    handle for checking a row against the raw source.
+                  */}
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <span className="mono text-xs" title={t.external_session_id}>
+                      {shortId(t.external_session_id)}
+                    </span>
+                    <div className="mono mt-0.5 text-[11px] text-[--color-ink-2]">turn #{t.seq}</div>
                   </td>
                   <td className="max-w-[420px] px-3 py-2">
                     <Link href={`/turns/${t.id}`} className="line-clamp-3 hover:text-[--color-accent]">

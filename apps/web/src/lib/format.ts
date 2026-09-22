@@ -60,6 +60,16 @@ export function utcShort(value: Date | string | null | undefined): string {
   return d.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+/**
+ * First segment of an opaque id, for a table cell too narrow for the whole
+ * thing. The full value always goes in a `title`, never thrown away — a
+ * session id is how a row is matched back to the agent's own transcript file.
+ */
+export function shortId(value: string | null | undefined, chars = 8): string {
+  if (!value) return '—';
+  return value.length <= chars ? value : `${value.slice(0, chars)}…`;
+}
+
 export function bytes(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = typeof value === 'number' ? value : Number(value);
