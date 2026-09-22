@@ -186,6 +186,36 @@ function renderUnifiedDiff(path: string, patch: unknown): string | null {
   return out.join('\n');
 }
 
+/**
+ * Content split into lines, without the phantom trailing element that
+ * `split('\n')` produces for a file ending in a newline.
+ */
+function contentLines(content: string): string[] {
+  if (content === '') return [];
+  const lines = content.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+/**
+ * Render a file creation as a unified diff against /dev/null.
+ *
+ * Verified on this machine 2026-09-22: across 40 `type:'create'` tool results
+ * in ~/.claude/projects, `structuredPatch` is `[]` every single time and the
+ * whole new file sits in `content`. So a created file has no patch to render,
+ * and without synthesizing one it is stored with no body at all — which is how
+ * all 539 `add` rows in this database came to show "no diff body captured"
+ * while all 1,607 `modify` rows have one.
+ */
+function renderCreationDiff(path: string, content: string): string | null {
+  const lines = contentLines(content);
+  if (lines.length === 0) return null;
+  const out = ['--- /dev/null', `+++ b${path}`, `@@ -0,0 +1,${lines.length} @@`];
+  for (const line of lines) out.push(`+${line}`);
+  if (!content.endsWith('\n')) out.push('\\ No newline at end of file');
+  return out.join('\n');
+}
+
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
@@ -367,13 +397,14 @@ class TurnBuilder {
     const { added, removed } = countPatchLines(patch);
     const originalFile = typeof result['originalFile'] === 'string' ? result['originalFile'] : null;
     const newContent = typeof result['content'] === 'string' ? result['content'] : null;
+    const created = isCreate && newContent !== null ? newContent : null;
 
     this.fileChanges.push({
       seq: this.fileChanges.length + 1,
       path: filePath,
       oldPath: null,
       changeType: isCreate ? 'add' : 'modify',
-      linesAdded: isCreate && newContent !== null ? newContent.split('\n').length : added,
+      linesAdded: created !== null ? contentLines(created).length : added,
       linesRemoved: isCreate ? 0 : removed,
       isBinary: false,
       blobHashBefore: originalFile !== null ? sha256(originalFile) : null,
@@ -382,7 +413,9 @@ class TurnBuilder {
       // read and its write, so the agent is not solely responsible for the
       // resulting content. Keep the row, flag the doubt — never drop it.
       attribution: result['userModified'] === true ? 'uncertain' : 'agent',
-      unifiedDiff: hasPatch ? renderUnifiedDiff(filePath, patch) : null,
+      unifiedDiff: hasPatch
+        ? renderUnifiedDiff(filePath, patch)
+        : created !== null ? renderCreationDiff(filePath, created) : null,
       toolCallSeq: toolCallIndex + 1,
     });
   }

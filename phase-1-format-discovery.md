@@ -238,11 +238,26 @@ content array with no `tool_result` block) and carry `promptSource`/`origin`.
 
 ```json
 { "type": "create", "filePath": "...", "content": "<full new content>",
-  "originalFile": "...", "structuredPatch": [...], "userModified": false }
+  "originalFile": null, "structuredPatch": [], "userModified": false }
 ```
 
-`structuredPatch` is already a hunk list — exactly what's needed for
-`file_change_diffs.unified_diff`:
+**Correction (2026-09-22).** This block previously showed `"originalFile":
+"..."` and `"structuredPatch": [...]`, implying a Write to a new path carries a
+patch. It does not. Across all 40 `type:"create"` results in
+`~/.claude/projects` on this machine, `structuredPatch` is `[]` and
+`originalFile` is `null` every time — the new file exists only in `content`:
+
+```
+grep -h '"type":"create"' -r ~/.claude/projects --include='*.jsonl'
+```
+
+A created file therefore has no patch to render, and the adapter must
+synthesize a `/dev/null` diff from `content` instead. Believing this block cost
+539 `add` rows their diff bodies (100% of them) before it was caught; see
+`renderCreationDiff()` in `apps/collector/src/adapters/claude-code.ts`.
+
+For `Edit` results the claim holds: `structuredPatch` is a populated hunk list
+— exactly what's needed for `file_change_diffs.unified_diff`:
 
 ```json
 [ { "oldStart": 6, "oldLines": 12, "newStart": 6, "newLines": 16,
