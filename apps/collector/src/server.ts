@@ -9,15 +9,20 @@
  *
  * Hook payloads land in raw_events verbatim and are NOT yet folded into turns.
  * Storing them unparsed was the right call and still is: the payload shape is
- * now known (docs/hook-payloads.md, read out of claude-code 2.1.278) and it
- * does NOT contain what the enrichment pass was going to be written for.
- * PostToolUse carries no exit code — that lives only on an OpenTelemetry span.
+ * now known (docs/hook-payloads.md, read out of claude-code 2.1.278 and then
+ * confirmed against live events) and storing it whole means the enrichment
+ * pass can be written later without re-capturing anything.
  *
- * What it does carry and an enrichment pass could use: `duration_ms` (a real
- * measurement, excluding permission-prompt and hook time, unlike the derived
- * upper bound Layer 1 gives), `tool_use_id` (an exact join key instead of
- * heuristic matching), and `agent_id` (present only inside a subagent, which
- * is the clean answer to sub-agent double counting).
+ * Exit codes ARE recoverable, contrary to an earlier note here that said they
+ * lived only on an OpenTelemetry span — the function that would set that span
+ * attribute is a no-op in the shipped binary. The working rule is observed:
+ * PostToolUseFailure carries `error` beginning "Exit code N". See migration 012.
+ *
+ * Also carried, and worth the pass: `duration_ms` (a real measurement,
+ * excluding permission-prompt and hook time, unlike the derived upper bound
+ * Layer 1 gives), `tool_use_id` (an exact join key instead of heuristic
+ * matching), and `agent_id` (present only inside a subagent, which is the
+ * clean answer to sub-agent double counting).
  *
  * One trap for whoever writes that pass: PostToolUse "may run concurrently for
  * parallel tool calls" per its own schema description, so events must not be
