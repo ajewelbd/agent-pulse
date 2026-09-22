@@ -10,6 +10,8 @@ import { query, queryOne } from './db';
 
 export interface TurnFilters {
   projectId?: string;
+  /** Internal sessions.id — how "Open session" narrows the list to one run. */
+  sessionId?: string;
   agentId?: string;
   providerId?: string;
   model?: string;
@@ -18,7 +20,14 @@ export interface TurnFilters {
   to?: string;
   q?: string;
   status?: string;
-  cursor?: string;
+  /** 'oldest' reverses the list; anything else is newest-first. */
+  sort?: string;
+  page?: string;
+}
+
+/** The ORDER BY the list and the rank query must agree on. */
+function orderDir(sort: string | undefined): 'ASC' | 'DESC' {
+  return sort === 'oldest' ? 'ASC' : 'DESC';
 }
 
 export interface TurnListRow extends Record<string, unknown> {
@@ -44,11 +53,13 @@ export interface TurnListRow extends Record<string, unknown> {
   cost_usd: string | null;
   cost_source: string;
   prompt_preview: string | null;
+  /** The turn also carried an editor-focus block, stripped from the preview. */
+  had_ide_context: boolean;
   tool_call_count: string;
   file_change_count: string;
 }
 
-const PAGE_SIZE = 50;
+export const PAGE_SIZE = 25;
 
 /**
  * Build the WHERE clause shared by the list and its count.
@@ -65,6 +76,7 @@ function buildWhere(filters: TurnFilters, params: unknown[]): string {
   };
 
   if (filters.projectId) add('t.project_id = $?', filters.projectId);
+  if (filters.sessionId) add('t.session_id = $?::bigint', filters.sessionId);
   if (filters.agentId) add('t.agent_id = $?', filters.agentId);
   if (filters.providerId) add('t.provider_id = $?', filters.providerId);
   if (filters.model) add('t.model_normalized = $?', filters.model);
@@ -79,6 +91,13 @@ function buildWhere(filters: TurnFilters, params: unknown[]): string {
   return clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 }
 
+/** 1-based, clamped. A junk `?page=` must land on page 1, never throw. */
+export function readPage(value: string | undefined, pageCount: number): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) return 1;
+  return Math.min(n, Math.max(1, pageCount));
+}
+
 /**
  * The turn list.
  *
@@ -89,25 +108,24 @@ function buildWhere(filters: TurnFilters, params: unknown[]): string {
  * prompt_text is truncated in SQL rather than in JS, so a 500 KB prompt is
  * never transferred just to show 200 characters of it.
  *
- * Keyset pagination on (started_at, id), not OFFSET: OFFSET re-scans and
- * discards every preceding row, so page 100 costs 100x page 1.
+ * OFFSET, not keyset. Keyset is the cheaper shape, but it can only step to an
+ * adjacent page, and the list needs to jump to an arbitrary numbered one. The
+ * cost is bounded: the sort is over the filtered set, and at the current 466
+ * turns the deepest page plans at 2.3 ms (EXPLAIN ANALYZE, 2026-09-22). Worth
+ * revisiting if this archive reaches six figures.
  */
 export async function listTurns(
   filters: TurnFilters,
-): Promise<{ rows: TurnListRow[]; nextCursor: string | null }> {
+  offset: number,
+): Promise<TurnListRow[]> {
   const params: unknown[] = [];
-  let where = buildWhere(filters, params);
+  const where = buildWhere(filters, params);
+  // Not user input: orderDir collapses everything to one of two literals.
+  const dir = orderDir(filters.sort);
 
-  if (filters.cursor) {
-    const [ts, id] = filters.cursor.split('|');
-    params.push(ts, id);
-    const clause = `(t.started_at, t.id) < ($${params.length - 1}::timestamptz, $${params.length}::bigint)`;
-    where = where ? `${where} AND ${clause}` : `WHERE ${clause}`;
-  }
+  params.push(PAGE_SIZE, offset);
 
-  params.push(PAGE_SIZE + 1);
-
-  const rows = await query<TurnListRow>(
+  return query<TurnListRow>(
     `SELECT t.id, t.seq,
             p.name AS project_name, p.path AS project_path,
             a.key AS agent_key, s.external_session_id,
@@ -116,7 +134,19 @@ export async function listTurns(
             t.started_at, t.ended_at, t.duration_ms, t.status,
             t.token_source, t.total_input_tokens, t.output_tokens,
             t.cost_usd, t.cost_source,
-            left(t.prompt_text, 240) AS prompt_preview,
+            -- Claude Code prefixes a turn with an editor block when the file
+            -- in focus or the selection changed. Verified on 2026-09-22: those
+            -- are the only two leading tags in this archive (154 + 53 of 466),
+            -- each is closed, and every one carries the real request after it —
+            -- so truncating the raw text would show 240 characters of
+            -- boilerplate and none of the prompt. Stripped in SQL so the block
+            -- is never transferred. ltrim is a separate call because Postgres
+            -- takes greediness from the FIRST quantifier, and the non-greedy
+            -- .*? would make a trailing [[:space:]]* match nothing.
+            left(ltrim(regexp_replace(t.prompt_text,
+                   '^<(ide_opened_file|ide_selection)>.*?</\\1>', ''), E' \\t\\r\\n'), 240)
+                                                            AS prompt_preview,
+            t.prompt_text ~ '^<(ide_opened_file|ide_selection)>' AS had_ide_context,
             (SELECT count(*) FROM tool_calls tc WHERE tc.turn_id = t.id)   AS tool_call_count,
             (SELECT count(*) FROM file_changes fc WHERE fc.turn_id = t.id) AS file_change_count
        FROM turns t
@@ -125,18 +155,10 @@ export async function listTurns(
        JOIN sessions s ON s.id = t.session_id
        LEFT JOIN providers pr ON pr.id = t.provider_id
        ${where}
-      ORDER BY t.started_at DESC, t.id DESC
-      LIMIT $${params.length}`,
+      ORDER BY t.started_at ${dir}, t.id ${dir}
+      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
-
-  const hasMore = rows.length > PAGE_SIZE;
-  const page = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
-  const last = page[page.length - 1];
-  return {
-    rows: page,
-    nextCursor: hasMore && last ? `${last.started_at.toISOString()}|${last.id}` : null,
-  };
 }
 
 export async function countTurns(filters: TurnFilters): Promise<number> {
@@ -159,10 +181,20 @@ export interface FilterOptions {
   providers: { id: string; key: string }[];
   models: { model_normalized: string }[];
   branches: { git_branch: string }[];
+  /**
+   * Only populated when a session filter is active. Sessions are not offered
+   * as a dropdown — there are thousands and none is memorable — but a filter
+   * the user cannot see is a filter they cannot undo, so the active one is
+   * resolved to its agent-side id for display.
+   */
+  activeSession: { id: string; external_session_id: string } | null;
 }
 
-export async function getFilterOptions(projectId?: string): Promise<FilterOptions> {
-  const [projects, agents, providers, models, branches] = await Promise.all([
+export async function getFilterOptions(
+  projectId?: string,
+  sessionId?: string,
+): Promise<FilterOptions> {
+  const [projects, agents, providers, models, branches, activeSession] = await Promise.all([
     query<{ id: string; name: string; path: string }>(
       `SELECT p.id, p.name, p.path FROM projects p
         WHERE EXISTS (SELECT 1 FROM turns t WHERE t.project_id = p.id)
@@ -188,8 +220,14 @@ export async function getFilterOptions(projectId?: string): Promise<FilterOption
         ORDER BY git_branch`,
       [projectId ?? null],
     ),
+    sessionId
+      ? queryOne<{ id: string; external_session_id: string }>(
+          `SELECT id, external_session_id FROM sessions WHERE id = $1::bigint`,
+          [sessionId],
+        )
+      : Promise.resolve(null),
   ]);
-  return { projects, agents, providers, models, branches };
+  return { projects, agents, providers, models, branches, activeSession };
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +237,7 @@ export async function getFilterOptions(projectId?: string): Promise<FilterOption
 export interface TurnDetail extends Record<string, unknown> {
   id: string;
   seq: number;
+  session_id: string;
   project_name: string;
   project_path: string;
   agent_key: string;
@@ -229,6 +268,8 @@ export interface TurnDetail extends Record<string, unknown> {
   response_text: string | null;
   redaction_version: number;
   external_session_id: string;
+  /** The agent's own id for this turn — the handle that survives a re-import. */
+  external_turn_id: string | null;
 }
 
 export function getTurn(id: string): Promise<TurnDetail | null> {
@@ -244,6 +285,130 @@ export function getTurn(id: string): Promise<TurnDetail | null> {
       WHERE t.id = $1::bigint`,
     [id],
   );
+}
+
+export interface CostBreakdownRow extends Record<string, unknown> {
+  input_usd: string;
+  cache_read_usd: string;
+  cache_write_usd: string;
+  output_usd: string;
+}
+
+/**
+ * What the turn's cost is made of.
+ *
+ * Recomputed from the SAME `model_pricing` row the turn was priced against
+ * (`turns.pricing_id`), not from today's rate — a price change inserts a new
+ * row, it does not rewrite what past turns cost, and this must not undo that.
+ * Verified on 2026-09-22 that the four components sum exactly to `cost_usd`.
+ *
+ * Returns null for an unpriced turn. There is no breakdown of a cost that was
+ * never computed, and a row of zeroes would read as "cost nothing".
+ */
+export function getCostBreakdown(turnId: string): Promise<CostBreakdownRow | null> {
+  return queryOne<CostBreakdownRow>(
+    `SELECT coalesce(t.input_tokens,0)/1e6 * mp.input_usd_per_mtok AS input_usd,
+            coalesce(t.cache_read_tokens,0)/1e6
+              * coalesce(mp.cache_read_usd_per_mtok, mp.input_usd_per_mtok)      AS cache_read_usd,
+            coalesce(t.cache_write_5m_tokens,0)/1e6
+              * coalesce(mp.cache_write_5m_usd_per_mtok, mp.input_usd_per_mtok)
+            + coalesce(t.cache_write_1h_tokens,0)/1e6
+              * coalesce(mp.cache_write_1h_usd_per_mtok, mp.input_usd_per_mtok)  AS cache_write_usd,
+            coalesce(t.output_tokens,0)/1e6 * mp.output_usd_per_mtok             AS output_usd
+       FROM turns t
+       JOIN model_pricing mp ON mp.id = t.pricing_id
+      WHERE t.id = $1::bigint`,
+    [turnId],
+  );
+}
+
+export interface SessionSummary extends Record<string, unknown> {
+  turn_count: string;
+  max_seq: number;
+  /** NULL when every turn in the session is unpriced — not zero. */
+  session_cost_usd: string | null;
+  unpriced_turns: string;
+}
+
+/**
+ * Session-level context for one turn's detail page.
+ *
+ * Exists so the cost card can say "32% of this session" — a turn's absolute
+ * cost means little without the session it sits in. The share is only shown
+ * when no turn in the session is unpriced, because a denominator that silently
+ * omits turns inflates every share computed from it.
+ */
+export function getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
+  return queryOne<SessionSummary>(
+    `SELECT count(*)                                           AS turn_count,
+            max(seq)                                           AS max_seq,
+            sum(cost_usd)                                      AS session_cost_usd,
+            count(*) FILTER (WHERE cost_source = 'unpriced')    AS unpriced_turns
+       FROM turns WHERE session_id = $1::bigint`,
+    [sessionId],
+  );
+}
+
+export interface NeighbourTurn extends Record<string, unknown> {
+  id: string;
+  seq: number;
+  cost_usd: string | null;
+  cost_source: string;
+  duration_ms: string | null;
+}
+
+/**
+ * The turns either side of this one *within its session*, which is the
+ * sequence a reader is actually following — not the global time order, where
+ * the neighbour is usually an unrelated project.
+ */
+export async function getTurnNeighbours(
+  sessionId: string,
+  seq: number,
+): Promise<{ prev: NeighbourTurn | null; next: NeighbourTurn | null }> {
+  const [prev, next] = await Promise.all([
+    queryOne<NeighbourTurn>(
+      `SELECT id, seq, cost_usd, cost_source, duration_ms FROM turns
+        WHERE session_id = $1::bigint AND seq < $2 ORDER BY seq DESC LIMIT 1`,
+      [sessionId, seq],
+    ),
+    queryOne<NeighbourTurn>(
+      `SELECT id, seq, cost_usd, cost_source, duration_ms FROM turns
+        WHERE session_id = $1::bigint AND seq > $2 ORDER BY seq ASC LIMIT 1`,
+      [sessionId, seq],
+    ),
+  ]);
+  return { prev, next };
+}
+
+/**
+ * This turn's 1-based position in the filtered, newest-first list.
+ *
+ * Counts the rows that sort ahead of it under the same ORDER BY the list uses,
+ * so "4 of 464" on the detail page means the same thing as row 4 on the list.
+ * Returns null when the turn is not in the filter at all — arriving from a
+ * stale link, say — rather than claiming a position it does not hold.
+ */
+export async function getTurnRank(
+  filters: TurnFilters,
+  turn: { id: string; started_at: Date },
+): Promise<number | null> {
+  const params: unknown[] = [];
+  const where = buildWhere(filters, params);
+  params.push(turn.started_at, turn.id);
+  const pair = `($${params.length - 1}::timestamptz, $${params.length}::bigint)`;
+  const self = `(t.started_at, t.id) = ${pair}`;
+  // "Ahead" follows the list's own direction: newest-first puts later turns first.
+  const ahead = `(t.started_at, t.id) ${orderDir(filters.sort) === 'DESC' ? '>' : '<'} ${pair}`;
+
+  const row = await queryOne<{ ahead: string; present: string }>(
+    `SELECT count(*) FILTER (WHERE ${ahead}) AS ahead,
+            count(*) FILTER (WHERE ${self})  AS present
+       FROM turns t ${where}`,
+    params,
+  );
+  if (!row || Number(row.present) === 0) return null;
+  return Number(row.ahead) + 1;
 }
 
 export interface ToolCallRow extends Record<string, unknown> {

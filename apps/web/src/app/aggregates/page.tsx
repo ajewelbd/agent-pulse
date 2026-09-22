@@ -1,4 +1,5 @@
 import { compactNum, cost, num } from '@/lib/format';
+import { readFilters } from '@/lib/filters';
 import { HealthBanner } from '@/components/HealthBanner';
 import { Chip } from '@/components/Chips';
 import {
@@ -6,26 +7,16 @@ import {
   getHealth,
   providerModelBreakdown,
   type AggregateRow,
-  type TurnFilters,
 } from '@/lib/queries';
 
 export const dynamic = 'force-dynamic';
-
-function readFilters(sp: Record<string, string | string[] | undefined>): TurnFilters {
-  const one = (k: string): string | undefined => {
-    const v = sp[k];
-    const s = Array.isArray(v) ? v[0] : v;
-    return s && s !== '' ? s : undefined;
-  };
-  return { from: one('from'), to: one('to'), projectId: one('projectId') };
-}
 
 /** Inline bar so relative magnitude is readable without a charting library. */
 function Bar({ value, max }: { value: number; max: number }) {
   const pct = max > 0 ? Math.max(1, Math.round((value / max) * 100)) : 0;
   return (
-    <div className="mt-1 h-1 w-full rounded bg-[--color-line]">
-      <div className="h-1 rounded bg-[--color-accent]" style={{ width: `${pct}%` }} />
+    <div className="mt-1 h-1 w-full rounded bg-line">
+      <div className="h-1 rounded bg-accent" style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -34,18 +25,18 @@ function AggregateTable({ title, rows, note }: { title: string; rows: AggregateR
   const maxCost = Math.max(0, ...rows.map((r) => Number(r.cost_usd ?? 0)));
 
   return (
-    <section className="rounded-lg border border-[--color-line]">
-      <h2 className="border-b border-[--color-line] bg-[--color-surface-2] px-3 py-2 text-sm font-semibold">
+    <section className="card overflow-hidden">
+      <h2 className="border-b border-line bg-surface-2 px-3 py-2 text-sm font-semibold">
         {title}
-        {note && <span className="ml-2 font-normal text-xs text-[--color-ink-2]">{note}</span>}
+        {note && <span className="ml-2 font-normal text-xs text-ink-2">{note}</span>}
       </h2>
       {rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-[--color-ink-2]">No data.</p>
+        <p className="px-3 py-4 text-sm text-ink-2">No data.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-[--color-ink-2]">
-              <tr className="border-b border-[--color-line]">
+            <thead className="text-left text-[11px] uppercase tracking-wide text-ink-2">
+              <tr className="border-b border-line">
                 <th className="px-3 py-1.5 font-medium">&nbsp;</th>
                 <th className="px-3 py-1.5 text-right font-medium">Turns</th>
                 <th className="px-3 py-1.5 text-right font-medium">Input</th>
@@ -55,7 +46,7 @@ function AggregateTable({ title, rows, note }: { title: string; rows: AggregateR
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.label} className="border-b border-[--color-line] last:border-0">
+                <tr key={r.label} className="border-b border-line last:border-0">
                   <td className="px-3 py-1.5">
                     <span className="mono text-xs">{r.label}</span>
                     <Bar value={Number(r.cost_usd ?? 0)} max={maxCost} />
@@ -64,7 +55,7 @@ function AggregateTable({ title, rows, note }: { title: string; rows: AggregateR
                     {num(r.turns)}
                     {Number(r.unpriced_turns) > 0 && (
                       <span
-                        className="ml-1 text-amber-600 dark:text-amber-400"
+                        className="ml-1 text-warn"
                         title={`${r.unpriced_turns} of these have no price, so the cost shown excludes them`}
                       >
                         ({r.unpriced_turns} unpriced)
@@ -111,35 +102,35 @@ export default async function AggregatesPage({
     <>
       <HealthBanner health={health} />
 
-      <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-lg border border-[--color-line] bg-[--color-surface-2] px-4 py-3">
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 card px-4 py-3">
         <div>
           <span className="text-xl font-semibold mono">{cost(String(totalCost))}</span>
-          <span className="ml-2 text-xs text-[--color-ink-2]">total recorded cost</span>
+          <span className="ml-2 text-xs text-ink-2">total recorded cost</span>
         </div>
-        <div className="text-sm text-[--color-ink-2]">
+        <div className="text-sm text-ink-2">
           {num(totalTurns)} turns
           {totalUnpriced > 0 && (
-            <span className="ml-2 text-amber-600 dark:text-amber-400">
+            <span className="ml-2 text-warn">
               · {num(totalUnpriced)} unpriced and excluded from the total
             </span>
           )}
         </div>
-        <span className="ml-auto text-[11px] text-[--color-ink-2]">
+        <span className="ml-auto text-[11px] text-ink-2">
           Derived from provider-reported usage and seeded rates — not billing-authoritative.
         </span>
       </div>
 
-      <section className="mb-4 rounded-lg border border-[--color-line]">
-        <h2 className="border-b border-[--color-line] bg-[--color-surface-2] px-3 py-2 text-sm font-semibold">
+      <section className="card mb-5 overflow-hidden">
+        <h2 className="border-b border-line bg-surface-2 px-3 py-2 text-sm font-semibold">
           Provider × model
-          <span className="ml-2 font-normal text-xs text-[--color-ink-2]">
+          <span className="ml-2 font-normal text-xs text-ink-2">
             cost is keyed on the pair — the same model prices differently through a gateway
           </span>
         </h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-[--color-ink-2]">
-              <tr className="border-b border-[--color-line]">
+            <thead className="text-left text-[11px] uppercase tracking-wide text-ink-2">
+              <tr className="border-b border-line">
                 <th className="px-3 py-1.5 font-medium">Provider</th>
                 <th className="px-3 py-1.5 font-medium">Model</th>
                 <th className="px-3 py-1.5 font-medium">Attribution</th>
@@ -153,7 +144,7 @@ export default async function AggregatesPage({
               {providerModel.map((r) => (
                 <tr
                   key={`${r.provider_key}|${r.model_normalized}|${r.provider_source}`}
-                  className="border-b border-[--color-line] last:border-0"
+                  className="border-b border-line last:border-0"
                 >
                   <td className="px-3 py-1.5">{r.provider_key}</td>
                   <td className="px-3 py-1.5 mono text-xs">{r.model_normalized}</td>

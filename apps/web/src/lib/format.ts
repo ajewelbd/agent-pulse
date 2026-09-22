@@ -70,6 +70,68 @@ export function shortId(value: string | null | undefined, chars = 8): string {
   return value.length <= chars ? value : `${value.slice(0, chars)}…`;
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null;
+  const d = typeof value === 'string' ? new Date(value) : value;
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "22 Sep" — UTC, like everything else here. */
+export function utcDay(value: Date | string | null | undefined): string {
+  const d = asDate(value);
+  return d ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}` : '—';
+}
+
+/** "09:33" — UTC wall clock. */
+export function utcClock(value: Date | string | null | undefined): string {
+  const d = asDate(value);
+  if (!d) return '—';
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/** "22 Sep 2026 · 04:50 UTC" — the detail-page header stamp. */
+export function utcLong(value: Date | string | null | undefined): string {
+  const d = asDate(value);
+  if (!d) return '—';
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${utcClock(d)} UTC`;
+}
+
+/**
+ * Claude Code prefixes a turn with an editor block when the file in focus or
+ * the selection changed. It is boilerplate the user never typed, and it is long
+ * enough to hide the actual request behind it.
+ *
+ * Verified against the prompt_text actually stored (2026-09-22): these are the
+ * only two leading tags in this archive, each is closed, and every one of the
+ * 207 carries the real request after it — so this splits rather than replaces.
+ * `rest` is what the user wrote; `path` is null when the block named no file.
+ */
+export function ideContext(
+  prompt: string | null | undefined,
+): { kind: string; path: string | null; rest: string } | null {
+  if (!prompt) return null;
+  const match = /^<(ide_opened_file|ide_selection)>([\s\S]*?)<\/\1>/.exec(prompt);
+  if (!match) return null;
+  // Two phrasings, verified against stored prompts: "opened the file X in the
+  // IDE." and "selected the lines N to M from X:". Paths contain spaces on this
+  // machine ("/Volumes/Macintosh HD 1/…"), so both captures are non-greedy up
+  // to their own terminator rather than to whitespace.
+  const body = match[2]!;
+  const path =
+    /opened the file (.+?) in the IDE\./.exec(body)?.[1] ??
+    /from (.+?):\s/.exec(body)?.[1] ??
+    null;
+  return { kind: match[1]!, path, rest: prompt.slice(match[0].length).trim() };
+}
+
+/** Last `keep` path segments, ellipsised at the front — the tail is what identifies a file. */
+export function tailPath(path: string, keep = 3): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts.length <= keep ? path : `…/${parts.slice(-keep).join('/')}`;
+}
+
 export function bytes(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = typeof value === 'number' ? value : Number(value);

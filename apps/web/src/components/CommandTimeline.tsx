@@ -18,7 +18,7 @@ import type { ToolCallRow } from '@/lib/queries';
 export function CommandTimeline({ calls }: { calls: ToolCallRow[] }) {
   if (calls.length === 0) {
     return (
-      <p className="rounded-lg border border-[--color-line] p-4 text-sm text-[--color-ink-2]">
+      <p className="rounded-lg border border-line p-4 text-sm text-ink-2">
         No tool calls recorded for this turn.
       </p>
     );
@@ -27,9 +27,9 @@ export function CommandTimeline({ calls }: { calls: ToolCallRow[] }) {
   return (
     <ol className="space-y-2">
       {calls.map((c) => (
-        <li key={c.id} className="overflow-hidden rounded-lg border border-[--color-line]">
-          <div className="flex flex-wrap items-center gap-2 bg-[--color-surface-2] px-3 py-2">
-            <span className="mono text-xs text-[--color-ink-2]">{String(c.seq).padStart(2, '0')}</span>
+        <li key={c.id} className="overflow-hidden rounded-lg border border-line">
+          <div className="flex flex-wrap items-center gap-2 bg-surface-2 px-3 py-2">
+            <span className="mono text-xs text-ink-2">{String(c.seq).padStart(2, '0')}</span>
             <span className="text-sm font-medium">{c.tool_name}</span>
 
             {c.exit_code === null ? (
@@ -45,7 +45,7 @@ export function CommandTimeline({ calls }: { calls: ToolCallRow[] }) {
             {c.interrupted && <Chip tone="warn">interrupted</Chip>}
             {c.is_background && <Chip>background</Chip>}
 
-            <span className="ml-auto flex items-center gap-2 text-xs text-[--color-ink-2]">
+            <span className="ml-auto flex items-center gap-2 text-xs text-ink-2">
               {c.started_at && <span className="mono">{utc(c.started_at)}</span>}
               {c.duration_ms !== null && (
                 <span
@@ -64,35 +64,35 @@ export function CommandTimeline({ calls }: { calls: ToolCallRow[] }) {
           </div>
 
           {c.command && (
-            <pre className="mono overflow-x-auto border-t border-[--color-line] px-3 py-2 text-[12px] leading-relaxed">
+            <pre className="mono overflow-x-auto border-t border-line px-3 py-2 text-[12px] leading-relaxed">
               <code>{c.command}</code>
             </pre>
           )}
 
           {c.cwd && (
-            <div className="mono border-t border-[--color-line] px-3 py-1 text-[11px] text-[--color-ink-2]">
+            <div className="mono border-t border-line px-3 py-1 text-[11px] text-ink-2">
               cwd: {c.cwd}
             </div>
           )}
 
           {c.stdout_excerpt && c.stdout_excerpt.trim() !== '' && (
-            <details className="border-t border-[--color-line]">
-              <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-[--color-ink-2]">
+            <details className="border-t border-line">
+              <summary className="cursor-pointer select-none px-3 py-1.5 text-xs text-ink-2">
                 Output
                 {c.stdout_truncated && (
-                  <span className="ml-2 text-amber-600 dark:text-amber-400">
+                  <span className="ml-2 text-warn">
                     capped — {bytes(c.stdout_bytes_total)} produced
                   </span>
                 )}
               </summary>
-              <pre className="mono max-h-96 overflow-auto bg-[--color-surface] px-3 py-2 text-[12px] leading-[1.45]">
+              <pre className="mono max-h-96 overflow-auto bg-surface px-3 py-2 text-[12px] leading-[1.45]">
                 <code>{c.stdout_excerpt}</code>
               </pre>
             </details>
           )}
         </li>
       ))}
-      <li className="px-1 text-[11px] text-[--color-ink-2]">
+      <li className="px-1 text-[11px] text-ink-2">
         * duration derived from surrounding timestamps — an upper bound that includes model latency.
       </li>
     </ol>
