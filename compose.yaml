@@ -156,6 +156,11 @@ services:
       # container cannot reach the host's own loopback, so the daemon is named
       # rather than addressed as 127.0.0.1.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Saving a compaction goes through the collector, because the dashboard's
+      # own pool is read-only and that is worth keeping. Over the compose
+      # network, never through the published host port.
+      COLLECTOR_URL: http://collector:4317
+      COLLECTOR_SHARED_SECRET: ${COLLECTOR_SHARED_SECRET}
     # Docker Desktop resolves host.docker.internal on its own; on Linux it does
     # not exist unless mapped, and without this the models list is simply empty.
     extra_hosts:

@@ -15,7 +15,8 @@ import {
   type CompactPart,
   type CompactTurn,
 } from '@/lib/compact';
-import { listOllamaModels, ollamaBaseUrl, ollamaChat } from '@/lib/ollama';
+import { saveCompaction } from '@/lib/compactionStore';
+import { listOllamaModels, ollamaBaseUrl, ollamaChat, ollamaUnreachableHint } from '@/lib/ollama';
 import {
   COMPACT_TURN_LIMIT,
   getCompactCommands,
@@ -50,6 +51,12 @@ interface Body {
   model?: unknown;
   /** False runs assembly only, even when a model is configured. */
   summarize?: unknown;
+  /**
+   * When set, the result is filed into that turn's compaction history via the
+   * collector. The turn detail page sets it; the list page's tray does not,
+   * because a block spanning ten turns belongs to no single one of them.
+   */
+  saveToTurnId?: unknown;
 }
 
 function bad(message: string) {
@@ -59,6 +66,61 @@ function bad(message: string) {
 /** Lazily constructed, for the reason the pg pool is: `next build` must not need a key. */
 function client(): Anthropic {
   return new Anthropic();
+}
+
+/** What every response carries, whatever happened after assembly. */
+interface CompactBase {
+  assembled: string;
+  turns: number;
+  missing: number;
+  provider: string;
+  model: string;
+  length: CompactLength;
+  parts: CompactPart[];
+  estimatedInputTokens: number;
+}
+
+/** Everything the panel and the history row both need. */
+interface Payload extends CompactBase {
+  output: string;
+  summarized: boolean;
+  reason?: string;
+  outputTruncated?: boolean;
+  usage?: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null };
+}
+
+/**
+ * The one exit from a compaction, so filing it cannot be forgotten on a path.
+ *
+ * Every outcome goes through here — summarised, refused, unconfigured, failed —
+ * because an unsummarised result is still a compaction that happened, and a
+ * history that recorded only the successes would misrepresent what the panel
+ * has been producing.
+ *
+ * Saving never changes the result. It reports alongside it: `saved` and, when
+ * that is false, `saveError`. A compaction the user can see but that could not
+ * be filed is a smaller problem than one that vanished because filing failed.
+ */
+async function finish(payload: Payload, saveToTurnId: string | null) {
+  if (!saveToTurnId) return NextResponse.json(payload);
+
+  const save = await saveCompaction({
+    turnId: saveToTurnId,
+    provider: payload.provider,
+    model: payload.model,
+    length: payload.length,
+    parts: payload.parts,
+    summarized: payload.summarized,
+    // The schema requires a reason whenever nothing was summarised, and the
+    // panel needs one to explain itself; no path should reach here without.
+    reason: payload.reason ?? (payload.summarized ? null : 'no reason recorded'),
+    output: payload.output,
+    inputTokens: payload.usage?.inputTokens ?? null,
+    outputTokens: payload.usage?.outputTokens ?? null,
+    estimatedInputTokens: payload.estimatedInputTokens,
+  });
+
+  return NextResponse.json({ ...payload, saved: save.saved, ...(save.error ? { saveError: save.error } : {}) });
 }
 
 export async function POST(request: Request) {
@@ -91,6 +153,8 @@ export async function POST(request: Request) {
 
   const provider = body.provider === 'ollama' ? 'ollama' : 'anthropic';
   const requestedModel = typeof body.model === 'string' ? body.model : '';
+  const saveToTurnId =
+    typeof body.saveToTurnId === 'string' && /^\d+$/.test(body.saveToTurnId) ? body.saveToTurnId : null;
 
   // ---- Stage 1: assembly. Always runs. ------------------------------------
 
@@ -135,7 +199,7 @@ export async function POST(request: Request) {
   const assembled = assembleContext(material, { parts, length });
 
   const blockTokens = estimateTokens(assembled);
-  const base = {
+  const base: CompactBase = {
     assembled,
     turns: material.length,
     missing: ids.length - material.length,
@@ -147,7 +211,7 @@ export async function POST(request: Request) {
   };
 
   if (body.summarize === false) {
-    return NextResponse.json({ ...base, output: assembled, summarized: false, reason: 'assembly only — no model was asked to run' });
+    return finish({ ...base, output: assembled, summarized: false, reason: 'assembly only — no model was asked to run' }, saveToTurnId);
   }
 
   const { system, user } = compactionPrompt(assembled, length);
@@ -155,16 +219,16 @@ export async function POST(request: Request) {
   // ---- Stage 2: summarisation. Optional, and allowed to fail. -------------
 
   if (provider === 'ollama') {
-    return summariseWithOllama({ base, assembled, blockTokens, length, requestedModel, system, user });
+    return summariseWithOllama({ base, assembled, blockTokens, length, requestedModel, system, user, saveToTurnId });
   }
 
   if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({
+    return finish({
       ...base,
       output: assembled,
       summarized: false,
       reason: 'ANTHROPIC_API_KEY is not set, so no model ran. This is the assembled record itself.',
-    });
+    }, saveToTurnId);
   }
 
   const model = ANTHROPIC_MODELS.find((m) => m.id === requestedModel) ?? ANTHROPIC_MODELS[0]!;
@@ -192,14 +256,14 @@ export async function POST(request: Request) {
     // returns 200 with content blocks, and treating that as a summary would
     // put the refusal itself into the user's context block.
     if (response.stop_reason === 'refusal') {
-      return NextResponse.json({
+      return finish({
         ...base,
         output: assembled,
         summarized: false,
         reason: `The model declined to summarise this run${
           response.stop_details?.category ? ` (${response.stop_details.category})` : ''
         }. The assembled record is below, unchanged.`,
-      });
+      }, saveToTurnId);
     }
 
     const text = response.content
@@ -209,15 +273,15 @@ export async function POST(request: Request) {
       .trim();
 
     if (!text) {
-      return NextResponse.json({
+      return finish({
         ...base,
         output: assembled,
         summarized: false,
         reason: 'The model returned no text. The assembled record is below, unchanged.',
-      });
+      }, saveToTurnId);
     }
 
-    return NextResponse.json({
+    return finish({
       ...base,
       output: text,
       summarized: true,
@@ -230,7 +294,7 @@ export async function POST(request: Request) {
         outputTokens: response.usage.output_tokens,
         cacheReadTokens: response.usage.cache_read_input_tokens,
       },
-    });
+    }, saveToTurnId);
   } catch (error) {
     // The assembly is still good, so it is still returned. The failure is
     // named rather than swallowed — the panel shows it above the output.
@@ -240,12 +304,12 @@ export async function POST(request: Request) {
         : error instanceof Error
           ? error.message
           : 'unknown error';
-    return NextResponse.json({
+    return finish({
       ...base,
       output: assembled,
       summarized: false,
       reason: `No model ran — ${reason}. The assembled record is below, unchanged.`,
-    });
+    }, saveToTurnId);
   }
 }
 
@@ -266,24 +330,27 @@ export async function POST(request: Request) {
  * returned instead of a summary nobody could trust.
  */
 async function summariseWithOllama(args: {
-  base: Record<string, unknown>;
+  base: CompactBase;
   assembled: string;
   blockTokens: number;
   length: CompactLength;
   requestedModel: string;
   system: string;
   user: string;
+  saveToTurnId: string | null;
 }) {
-  const { base, assembled, blockTokens, length, requestedModel, system, user } = args;
+  const { base, assembled, blockTokens, length, requestedModel, system, user, saveToTurnId } = args;
   const record = (reason: string) =>
-    NextResponse.json({ ...base, output: assembled, summarized: false, reason });
+    finish({ ...base, output: assembled, summarized: false, reason }, saveToTurnId);
 
   let available;
   try {
     available = await listOllamaModels(AbortSignal.timeout(2500));
   } catch {
     return record(
-      `No Ollama daemon at ${ollamaBaseUrl()}, so no model ran. Start one with \`ollama serve\`. The assembled record is below, unchanged.`,
+      `No Ollama daemon at ${ollamaBaseUrl()}, so no model ran. ${
+        ollamaUnreachableHint() ?? 'Start one with `ollama serve`.'
+      } The assembled record is below, unchanged.`,
     );
   }
 
@@ -330,7 +397,7 @@ async function summariseWithOllama(args: {
       return record(`${model.id} returned no text. The assembled record is below, unchanged.`);
     }
 
-    return NextResponse.json({
+    return finish({
       ...base,
       output: result.content,
       summarized: true,
@@ -342,7 +409,7 @@ async function summariseWithOllama(args: {
         outputTokens: result.evalCount ?? null,
         cacheReadTokens: null,
       },
-    });
+    }, saveToTurnId);
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'unknown error';
     return record(`No model ran — ${reason}. The assembled record is below, unchanged.`);

@@ -1,0 +1,21 @@
+-- Rollback of 013_compactions.
+--
+-- DATA LOSS: drops every stored compaction.
+--
+-- Worse than it looks, and in a way the other destructive rollbacks are not.
+-- A proxy_requests row can in principle be re-derived from retained raw
+-- payloads; a compaction cannot be re-derived from anything, because two of
+-- its inputs are gone the moment the row is dropped:
+--
+--   * the model's output, which is not deterministic and is not stored
+--     anywhere else;
+--   * the operator's intent — which turns they thought belonged together, at
+--     what length, with what material.
+--
+-- Re-running the same settings on the same turn produces a different document.
+-- The assembled record (summarized = false) is reproducible; a summary is not.
+--
+-- Back up first:
+--   pg_dump -Fc -t compactions "$DATABASE_URL" > /backups/compactions.dump
+
+DROP TABLE IF EXISTS compactions;

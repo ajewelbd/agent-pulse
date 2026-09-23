@@ -59,7 +59,60 @@ export interface HookServerOptions {
   sharedSecret: string;
   db: Db;
   agentIdFor: (agentKey: string) => Promise<number>;
+  /** Stamped on stored compactions — the pattern set this collector runs. */
+  redactionVersion: number;
   onEvent?: () => void;
+}
+
+/** The subset of a compaction POST this endpoint requires. */
+interface CompactionBody {
+  requestId?: unknown;
+  turnId?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  length?: unknown;
+  parts?: unknown;
+  summarized?: unknown;
+  reason?: unknown;
+  output?: unknown;
+  inputTokens?: unknown;
+  outputTokens?: unknown;
+  estimatedInputTokens?: unknown;
+}
+
+const LENGTHS = new Set(['brief', 'standard', 'detailed']);
+const PARTS = new Set(['prompt', 'response', 'commands', 'files', 'diffs']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Validate a compaction before it reaches the database.
+ *
+ * Everything here is also a CHECK constraint in migration 013, so this is not
+ * the only guard — it exists so a malformed post comes back as a 400 naming the
+ * field, rather than as a constraint violation the caller has to decode.
+ *
+ * Returns the error message, or null when the body is good.
+ */
+function badCompaction(b: CompactionBody): string | null {
+  if (typeof b.requestId !== 'string' || !UUID_RE.test(b.requestId)) return 'requestId must be a uuid';
+  if (typeof b.turnId !== 'string' || !/^\d+$/.test(b.turnId)) return 'turnId must be numeric';
+  if (typeof b.provider !== 'string' || b.provider === '') return 'provider is required';
+  if (typeof b.model !== 'string' || b.model === '') return 'model is required';
+  if (typeof b.length !== 'string' || !LENGTHS.has(b.length)) return 'length must be brief, standard or detailed';
+  if (!Array.isArray(b.parts) || b.parts.length === 0) return 'parts must be a non-empty array';
+  if (!b.parts.every((p) => typeof p === 'string' && PARTS.has(p))) return 'parts contains an unknown value';
+  if (typeof b.summarized !== 'boolean') return 'summarized must be a boolean';
+  // The schema's own rule, restated where it can be explained: an unsummarised
+  // row with no reason leaves the history panel unable to say why.
+  if (!b.summarized && typeof b.reason !== 'string') return 'reason is required when summarized is false';
+  if (typeof b.output !== 'string' || b.output === '') return 'output is required';
+  if (typeof b.estimatedInputTokens !== 'number') return 'estimatedInputTokens must be a number';
+  return null;
+}
+
+/** A reported count, or null. NEVER 0 for "not reported". */
+function optionalCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 export function startHookServer(options: HookServerOptions): Server {
@@ -141,6 +194,70 @@ async function handle(
     options.onEvent?.();
     res.writeHead(202, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ accepted: true, stored: inserted }));
+    return;
+  }
+
+  /**
+   * A compaction the dashboard produced.
+   *
+   * This is the one endpoint that stores something the operator did rather than
+   * something an agent did, and it exists here rather than in apps/web because
+   * the dashboard's pool is read-only and stays that way.
+   *
+   * Same shared secret as the hook endpoint, for the same reason: any local
+   * process could otherwise write into this history — or, by posting and
+   * reading back, learn what is in it.
+   */
+  if (url.pathname === '/v1/compactions' && req.method === 'POST') {
+    const body = await readBody(req);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'body is not valid JSON' }));
+      return;
+    }
+
+    const c = (typeof payload === 'object' && payload !== null ? payload : {}) as CompactionBody;
+    const problem = badCompaction(c);
+    if (problem) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: problem }));
+      return;
+    }
+
+    let stored: boolean;
+    try {
+      stored = await options.db.insertCompaction({
+        requestId: c.requestId as string,
+        turnId: c.turnId as string,
+        provider: c.provider as string,
+        model: c.model as string,
+        length: c.length as string,
+        parts: c.parts as string[],
+        summarized: c.summarized as boolean,
+        reason: typeof c.reason === 'string' ? c.reason : null,
+        output: c.output as string,
+        inputTokens: optionalCount(c.inputTokens),
+        outputTokens: optionalCount(c.outputTokens),
+        estimatedInputTokens: c.estimatedInputTokens as number,
+        redactionVersion: options.redactionVersion,
+      });
+    } catch (error) {
+      // A turn_id naming no turn is the caller's mistake, not a server fault —
+      // the tray can outlive the row it points at.
+      const message = error instanceof Error ? error.message : 'insert failed';
+      const isFk = /foreign key|violates foreign key constraint/i.test(message);
+      res.writeHead(isFk ? 400 : 500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: isFk ? `no turn ${String(c.turnId)}` : message }));
+      return;
+    }
+
+    res.writeHead(stored ? 201 : 200, { 'content-type': 'application/json' });
+    // `stored: false` means this request_id was already recorded — a retry, not
+    // a failure, and the caller should treat it as success.
+    res.end(JSON.stringify({ accepted: true, stored }));
     return;
   }
 

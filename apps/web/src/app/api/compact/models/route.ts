@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ANTHROPIC_MODELS, type CompactModel } from '@/lib/compact';
-import { listOllamaModels, ollamaBaseUrl } from '@/lib/ollama';
+import { listOllamaModels, ollamaBaseUrl, ollamaUnreachableHint } from '@/lib/ollama';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,7 +61,9 @@ export async function GET() {
       label: 'Ollama (this machine)',
       local: true,
       available: false,
-      reason: `No Ollama daemon at ${ollamaBaseUrl()}. Start one with: ollama serve`,
+      reason: `No Ollama daemon at ${ollamaBaseUrl()}. ${
+        ollamaUnreachableHint() ?? 'Start one with: ollama serve'
+      }`,
       models: [],
     });
   }

@@ -915,6 +915,44 @@ export function getCompactFiles(ids: string[], withDiffs: boolean): Promise<Comp
   );
 }
 
+export interface CompactionRow extends Record<string, unknown> {
+  id: string;
+  created_at: Date;
+  provider: string;
+  model: string;
+  length: string;
+  parts: string[];
+  summarized: boolean;
+  reason: string | null;
+  output: string;
+  input_tokens: string | null;
+  output_tokens: string | null;
+  estimated_input_tokens: string;
+  redaction_version: number;
+}
+
+/**
+ * One turn's compaction history, newest first.
+ *
+ * The READ side only. Rows get here through the collector — the dashboard's
+ * pool is read-only, see migration 013 and CLAUDE.md.
+ *
+ * `output` is selected in full because the history panel's whole purpose is
+ * showing it back. It is bounded by the turn (compactions_turn_created_idx) and
+ * by how many times a person pressed a button, not by a page of a filter.
+ */
+export function listCompactions(turnId: string): Promise<CompactionRow[]> {
+  return query<CompactionRow>(
+    `SELECT id, created_at, provider, model, length, parts, summarized, reason,
+            output, input_tokens, output_tokens, estimated_input_tokens,
+            redaction_version
+       FROM compactions
+      WHERE turn_id = $1::bigint
+      ORDER BY created_at DESC, id DESC`,
+    [turnId],
+  );
+}
+
 /**
  * Data-quality banner for the dashboard.
  *

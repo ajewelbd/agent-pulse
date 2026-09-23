@@ -19,6 +19,33 @@ export function ollamaBaseUrl(): string {
   return (process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
 }
 
+/**
+ * The one configuration mistake this setup invites, named so nobody has to
+ * work it out twice.
+ *
+ * `http://127.0.0.1:11434` is the right value on the host and a wrong one
+ * inside the container, where loopback is the container itself — and the
+ * failure looks identical to "the daemon is not running". Hit here on
+ * 2026-09-23 when .env carried the host-shaped value and compose passed it
+ * through: the panel reported no daemon while `ollama serve` was running
+ * perfectly well three feet away.
+ *
+ * `/.dockerenv` is the check (present in this image, confirmed), and
+ * host.docker.internal resolves from it.
+ */
+export function ollamaUnreachableHint(): string | null {
+  const url = ollamaBaseUrl();
+  const isLoopback = /\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(url);
+  if (!isLoopback) return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    if (!require('node:fs').existsSync('/.dockerenv')) return null;
+  } catch {
+    return null;
+  }
+  return 'Inside the container 127.0.0.1 is the container itself, not your machine — set OLLAMA_BASE_URL=http://host.docker.internal:11434 in .env and restart.';
+}
+
 /** The subset of an /api/tags entry this app reads. */
 interface TagEntry {
   name?: unknown;

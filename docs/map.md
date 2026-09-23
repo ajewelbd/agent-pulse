@@ -53,6 +53,7 @@ Everything that both the collector and the proxy must agree on.
 | 010 | proxy | `proxy_requests` and its correlation columns |
 | 011 | exit_code_comment | corrects 005's false claim that PostToolUse carries exit codes |
 | 012 | exit_code_from_hooks | documents the observed derivation rule from `PostToolUseFailure` |
+| 013 | compactions | `compactions` — operator-initiated compactions, with the settings that made each |
 
 011 and 012 exist because **an applied migration is never edited**. When one
 turns out to state something false, the correction is a new migration.
@@ -67,7 +68,7 @@ turns out to state something false, the correction is a new migration.
 | `src/watcher.ts` | inotify vs poll; `auto` **probes** rather than assuming, and logs which it chose |
 | `src/ingest.ts` | The agent-agnostic pipeline: translation, redaction, provider, cost, idempotent writes |
 | `src/db.ts` | Every SQL statement the collector runs; `findPricing()` lives here |
-| `src/server.ts` | Layer 2 hook receiver on `:4317` + `/healthz` |
+| `src/server.ts` | Layer 2 hook receiver on `:4317` + `/healthz` + `/v1/compactions` (the dashboard's only write path) |
 | `src/reconciler.ts` | Closes stale partials; correlates proxy calls; applies precedence per field |
 | `src/adapters/types.ts` | The `AgentAdapter` contract — `discover()` and `parse()` |
 | `src/adapters/claude-code.ts` | The one verified adapter |
@@ -99,11 +100,14 @@ logs a warning rather than silently ingesting nothing.
 
 ## `apps/web` — the dashboard
 
-Read-only. Rendering is server components throughout; no client data fetching,
-with one exception — the compact panel, which POSTs a hand-picked list of turn
-ids and gets a context block back. The route handlers are the four that must
-return something other than a page: health, the JSON export, one prompt
-attachment's bytes, and that compaction.
+Read-only, and still read-only: the compact panel is the one feature that
+produces something to store, and it does not store it — it hands the finished
+record to the collector, which owns every write in this system.
+
+Rendering is server components throughout, with one exception: the compact
+panel, which POSTs a list of turn ids and gets a context block back. The route
+handlers are the five that must return something other than a page: health, the
+JSON export, one prompt attachment's bytes, a compaction, and the model list.
 
 | File | Responsibility |
 |---|---|
@@ -120,6 +124,7 @@ attachment's bytes, and that compaction.
 | `src/lib/compact.test.ts` | The four ways a block could lie: false zero, false success, silent abridgement, lost provenance |
 | `src/lib/compactRef.ts` | A list row reduced to what the compaction tray shows, formatted server-side |
 | `src/lib/ollama.ts` | The local-model path — shapes read off a running daemon, not recalled |
+| `src/lib/compactionStore.ts` | Hands a finished compaction to the collector to store. Best effort, never silent |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
 | `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
 | `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
@@ -144,6 +149,7 @@ attachment's bytes, and that compaction.
 | `src/components/CompactPicker.tsx` | Row checkbox and drag handle; the handle carries `draggable`, not the row |
 | `src/components/CompactDock.tsx` | The floating dock — resting / armed / drag-over / working |
 | `src/components/CompactPanel.tsx` | The panel: tray, what to include, length, model, and the block that comes back |
+| `src/components/TurnCompact.tsx` | The detail page's own compact panel, plus that turn's compaction history |
 
 ### Compaction
 
@@ -197,6 +203,29 @@ answer out, nothing in the response indicating a problem. So:
   tokenise densely. A block that still does not fit is refused, not sent.
 - `looksTruncated()` is the backstop: a `prompt_eval_count` that reached the
   window means the front was dropped, and the summary is withheld.
+
+#### Compact history (turn detail page)
+
+Each run from a turn's detail page is stored in `compactions`, **with its
+settings** — model, provider, length, and which parts went in. Without those the
+row is a paragraph with no way to know what it left out.
+
+The write does not happen in the dashboard. `apps/web` POSTs to the collector
+(`POST /v1/compactions`, same shared secret as the hooks) and the collector
+inserts; the dashboard's pool keeps `default_transaction_read_only=on`. The read
+side is `listCompactions()` in queries.ts like everything else.
+
+- **`summarized` is the load-bearing column.** False means `output` IS the
+  assembled record; true means a model rewrote it. Every history row is labelled
+  "Summary" or "Assembled record" on its face.
+- **Unsummarised runs are stored too**, with the reason. A history that kept
+  only the successes would misrepresent what the panel has been producing, so a
+  CHECK constraint requires a reason whenever `summarized` is false.
+- **Saving is best effort and never silent.** A compaction that ran is shown
+  whether or not it could be filed; when it could not, the panel says so and
+  says why, and the row is not added to the history list.
+- **`request_id` is client-generated and unique**, so a retry after a timeout
+  costs nothing and one press cannot become two rows.
 
 ### The session filter
 
@@ -332,6 +361,7 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 | change what a compacted block contains, or how it says it abridged something | `apps/web/src/lib/compact.ts` — **and add a case to its test** |
 | add an Anthropic model to the compact dropdown | `ANTHROPIC_MODELS` in `apps/web/src/lib/compact.ts` — set `effort`/`fallback` from that model's own docs, not by analogy |
 | add an Ollama model to the compact dropdown | `ollama pull <model>` — the panel discovers it; nothing to edit |
+| change what a stored compaction records | migration 013 **and** `apps/collector/src/server.ts` → `/v1/compactions` — the validator and the CHECK constraints say the same things on purpose |
 | add a third compaction provider | `lib/ollama.ts` as the template, a branch in `api/compact/route.ts`, an entry in `api/compact/models` — **and verify its truncation behaviour before trusting a response** |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |

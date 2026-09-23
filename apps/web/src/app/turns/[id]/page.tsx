@@ -8,6 +8,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { FileChangeList } from '@/components/DiffView';
 import { PromptAttachments } from '@/components/PromptAttachments';
 import { ProviderChip, StatusChip, TokenSourceChip } from '@/components/Chips';
+import { TurnCompact } from '@/components/TurnCompact';
 import {
   IconAgent,
   IconArrowLeft,
@@ -38,6 +39,7 @@ import {
   getTurn,
   getTurnNeighbours,
   getTurnRank,
+  listCompactions,
   countTurns,
   type FileChangeRow,
   type NeighbourTurn,
@@ -191,7 +193,7 @@ export default async function TurnDetailPage({
     ),
   ).toString();
 
-  const [calls, changes, costInputs, session, neighbours, rank, filterTotal, media] =
+  const [calls, changes, costInputs, session, neighbours, rank, filterTotal, media, compactions] =
     await Promise.all([
       getToolCalls(id),
       getFileChanges(id),
@@ -201,6 +203,7 @@ export default async function TurnDetailPage({
       getTurnRank(filters, turn),
       countTurns(filters),
       getPromptMedia(id),
+      listCompactions(id),
     ]);
 
   // The editor-focus block is a prefix the user never typed; the heading is
@@ -414,12 +417,25 @@ export default async function TurnDetailPage({
             <CommandTimeline calls={calls} />
           </section>
 
-          <section id="file-changes" className="mb-10 scroll-mt-20">
+          <section id="file-changes" className="mb-8 scroll-mt-20">
             <h2 className="mb-2 text-sm font-semibold">
               File changes <span className="font-normal text-ink-2">({changes.length})</span>
             </h2>
             <FileChangeList changes={changes} />
           </section>
+
+          {/* Last in the column on purpose: compacting is something you do
+              after reading the turn, not instead of reading it. Dates are
+              serialised because a Date cannot cross into a client component. */}
+          <TurnCompact
+            turnId={id}
+            history={compactions.map((c) => ({
+              ...c,
+              created_at: c.created_at.toISOString(),
+              input_tokens: c.input_tokens,
+              output_tokens: c.output_tokens,
+            }))}
+          />
         </div>
 
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
