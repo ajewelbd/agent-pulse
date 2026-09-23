@@ -147,6 +147,10 @@ services:
       # Over the compose network, never through the published host port.
       DATABASE_URL: postgres://${POSTGRES_USER:-aiuo}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiuo}
       NODE_ENV: production
+      # The ONE thing in this stack that reaches the network, and only when the
+      # compact panel is used. Unset by default: with no key the panel still
+      # assembles the context block locally and says that no model ran.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-3000}:3000"
     depends_on:

@@ -20,6 +20,9 @@
     "src/lib/cost.ts",
     "src/lib/cost.test.ts",
     "src/lib/tokens.ts",
-    "src/lib/tokens.test.ts"
+    "src/lib/tokens.test.ts",
+    "src/lib/format.ts",
+    "src/lib/compact.ts",
+    "src/lib/compact.test.ts"
   ]
 }

@@ -799,6 +799,122 @@ export async function providerModelBreakdown(filters: TurnFilters): Promise<Prov
   );
 }
 
+// ---------------------------------------------------------------------------
+// Compaction material
+// ---------------------------------------------------------------------------
+
+/**
+ * The most turns one compaction may fold.
+ *
+ * Not a performance limit — it is the point past which the assembled block is
+ * larger than any context it would be pasted into, so the request is refused
+ * rather than silently clipped to something misleading.
+ */
+export const COMPACT_TURN_LIMIT = 40;
+
+export interface CompactTurnRow extends Record<string, unknown> {
+  id: string;
+  seq: number;
+  started_at: Date;
+  status: string;
+  project_name: string;
+  agent_key: string;
+  git_branch: string | null;
+  model_raw: string | null;
+  external_session_id: string;
+  prompt_text: string | null;
+  response_text: string | null;
+  token_source: string;
+  total_input_tokens: string;
+  output_tokens: string | null;
+  cost_usd: string | null;
+  cost_source: string;
+  duration_ms: string | null;
+}
+
+/**
+ * Whole turns, for the compact panel.
+ *
+ * Unlike the list this DOES select `prompt_text` and `response_text` in full —
+ * folding a run of turns into a context block is precisely a request for their
+ * content, so truncating in SQL would defeat it. The bound is the id list:
+ * COMPACT_TURN_LIMIT turns the user picked by hand, not a page of a filter.
+ *
+ * `= ANY($1::bigint[])` rather than an IN list built by hand: one bound
+ * parameter, so a hostile id can no more reach the planner than a filter value
+ * can. The caller has already checked each id is digits.
+ */
+export function getCompactTurns(ids: string[]): Promise<CompactTurnRow[]> {
+  return query<CompactTurnRow>(
+    `SELECT t.id, t.seq, t.started_at, t.status,
+            p.name AS project_name, a.key AS agent_key,
+            t.git_branch, t.model_raw, s.external_session_id,
+            t.prompt_text, t.response_text,
+            t.token_source, t.total_input_tokens, t.output_tokens,
+            t.cost_usd, t.cost_source, t.duration_ms
+       FROM turns t
+       JOIN projects p ON p.id = t.project_id
+       JOIN agents a   ON a.id = t.agent_id
+       JOIN sessions s ON s.id = t.session_id
+      WHERE t.id = ANY($1::bigint[])`,
+    [ids],
+  );
+}
+
+export interface CompactCommandRow extends Record<string, unknown> {
+  turn_id: string;
+  seq: number;
+  tool_name: string;
+  command: string | null;
+  exit_code: number | null;
+  duration_ms: string | null;
+  interrupted: boolean;
+}
+
+export function getCompactCommands(ids: string[]): Promise<CompactCommandRow[]> {
+  return query<CompactCommandRow>(
+    `SELECT turn_id, seq, tool_name, command, exit_code, duration_ms, interrupted
+       FROM tool_calls
+      WHERE turn_id = ANY($1::bigint[])
+      ORDER BY turn_id, seq`,
+    [ids],
+  );
+}
+
+export interface CompactFileRow extends Record<string, unknown> {
+  turn_id: string;
+  seq: number;
+  path: string;
+  change_type: string;
+  lines_added: number | null;
+  lines_removed: number | null;
+  is_binary: boolean;
+  unified_diff: string | null;
+}
+
+/**
+ * File changes for the compact panel, with diff bodies only if asked.
+ *
+ * The join to `file_change_diffs` is behind `withDiffs` for the reason that
+ * table exists at all: a diff body is a multi-MB TOASTed value, and dragging
+ * forty turns' worth of them to render a path list would be the exact mistake
+ * the split was made to prevent. The panel's "Diffs" toggle is what turns it
+ * on, and it is off by default.
+ */
+export function getCompactFiles(ids: string[], withDiffs: boolean): Promise<CompactFileRow[]> {
+  const diffSelect = withDiffs ? 'd.unified_diff' : 'NULL::text AS unified_diff';
+  const diffJoin = withDiffs ? 'LEFT JOIN file_change_diffs d ON d.file_change_id = fc.id' : '';
+  return query<CompactFileRow>(
+    `SELECT fc.turn_id, fc.seq, fc.path, fc.change_type,
+            fc.lines_added, fc.lines_removed, fc.is_binary, ${diffSelect}
+       FROM file_changes fc
+       ${diffJoin}
+      WHERE fc.turn_id = ANY($1::bigint[])
+      ORDER BY fc.turn_id, fc.seq`,
+    [ids],
+  );
+}
+
 /**
  * Data-quality banner for the dashboard.
  *

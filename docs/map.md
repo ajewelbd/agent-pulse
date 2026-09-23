@@ -99,9 +99,11 @@ logs a warning rather than silently ingesting nothing.
 
 ## `apps/web` — the dashboard
 
-Read-only. Rendering is server components throughout; no client data fetching.
-The only route handlers are the three that must return something other than a
-page — health, the JSON export, and one prompt attachment's bytes.
+Read-only. Rendering is server components throughout; no client data fetching,
+with one exception — the compact panel, which POSTs a hand-picked list of turn
+ids and gets a context block back. The route handlers are the four that must
+return something other than a page: health, the JSON export, one prompt
+attachment's bytes, and that compaction.
 
 | File | Responsibility |
 |---|---|
@@ -114,11 +116,15 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/lib/cost.test.ts` | Cost-working cases, fixtures taken from real stored turns |
 | `src/lib/tokens.ts` | What a token count is made of, and which counts are absent rather than zero |
 | `src/lib/tokens.test.ts` | Token-breakdown cases, fixtures taken from real stored turns |
+| `src/lib/compact.ts` | Folds a run of turns into one context block — pure, no DB, no network |
+| `src/lib/compact.test.ts` | The four ways a block could lie: false zero, false success, silent abridgement, lost provenance |
+| `src/lib/compactRef.ts` | A list row reduced to what the compaction tray shows, formatted server-side |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
 | `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
 | `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
 | `src/app/turns/[id]/attachment/[idx]/route.ts` | One attached screenshot or document, decoded |
 | `src/app/aggregates/page.tsx` | Rollups by day / project / agent / provider / model / branch |
+| `src/app/api/compact/route.ts` | Assembles the block from the DB, then optionally asks Claude to summarise it |
 | `src/app/healthz/route.ts` | `SELECT 1`; 503 on failure |
 | `src/app/layout.tsx`, `globals.css`, `not-found.tsx` | Shell and theme |
 | `src/components/TurnFilters.tsx` | Plain GET form — filter state lives in the URL, so views are linkable |
@@ -132,6 +138,36 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/components/TokenTip.tsx` | What a turn's token counts are made of, on an info icon |
 | `src/components/HealthBanner.tsx` | States where the numbers are incomplete, and what to do about each |
 | `src/components/Chips.tsx` | Provenance chips — every one exists to make a *known unknown* visible |
+| `src/components/CompactSelection.tsx` | The compaction tray: context, sessionStorage, totals that skip unknowns |
+| `src/components/CompactPicker.tsx` | Row checkbox and drag handle; the handle carries `draggable`, not the row |
+| `src/components/CompactDock.tsx` | The floating dock — resting / armed / drag-over / working |
+| `src/components/CompactPanel.tsx` | The panel: tray, what to include, length, model, and the block that comes back |
+
+### Compaction
+
+Picking a run of turns and folding them into one block someone can paste into a
+new session. Turns go into the tray by checkbox or by dragging a row onto the
+floating dock; the panel is where the block is made.
+
+It runs in **two stages, and they must not be confused with each other:**
+
+1. **Assembly** — `lib/compact.ts` builds the block out of the database rows.
+   Pure, local, no network, and always runs. This is the product.
+2. **Summarisation** — `api/compact/route.ts` optionally hands that block to
+   Claude. Requires `ANTHROPIC_API_KEY`; it is the only outbound request the
+   dashboard makes, and it happens only when someone presses the button.
+
+If stage 2 is unconfigured, refused, empty or fails, the response still carries
+the stage-1 block and a `reason` saying what happened, which the panel prints
+above the output. The output header always names which of the two is on screen.
+A summary standing in silently for the record — or a record looking like a
+summary — would be a claim about a run that nobody could check.
+
+Assembly follows the same rule as the rest of the UI: an unreported token count
+is "—", an unpriced turn is "not priced", a missing exit code is "exit unknown".
+Every budget that bites is announced in the text (`[clipped — N more
+characters]`, `… N more not listed at this length`), because a block that
+quietly dropped half a response would be read later as the whole of it.
 
 ### The session filter
 
@@ -264,6 +300,8 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 | change how prompt attachments are recognised | `apps/web/src/lib/attachments.ts` — **and add a case to its test** |
 | change how a cost is explained on screen | `apps/web/src/lib/cost.ts` — **and keep it a mirror of `ingest.ts` → `computeCost()`** |
 | change how a token count is explained, or rendered when absent | `apps/web/src/lib/tokens.ts` and `format.ts` → `tokenCount()` |
+| change what a compacted block contains, or how it says it abridged something | `apps/web/src/lib/compact.ts` — **and add a case to its test** |
+| add a model to the compact panel's dropdown | `COMPACT_MODELS` in `apps/web/src/lib/compact.ts` — set `effort`/`fallback` from that model's own docs, not by analogy |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |
 | understand why a turn has no provider | `reconciler.ts` → `applyProviderAttribution()` |
