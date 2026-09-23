@@ -5,12 +5,14 @@ import { CompactDock } from './CompactDock';
 import { DRAG_MIME, trayTotals, useCompact, type CompactTurnRef } from './CompactSelection';
 import { CopyButton } from './CopyButton';
 import {
-  COMPACT_MODELS,
   COMPACT_PARTS,
   DEFAULT_COMPACT_MODEL,
+  DEFAULT_COMPACT_PROVIDER,
   DEFAULT_PARTS,
   type CompactLength,
+  type CompactModel,
   type CompactPart,
+  type CompactProviderKey,
 } from '@/lib/compact';
 import { compactNum } from '@/lib/format';
 import { IconChevronDown, IconClose, IconCompact, IconDownload, IconGrip, IconPlus, IconSparkle, IconWarning } from './icons';
@@ -34,12 +36,22 @@ interface Result {
   assembled: string;
   summarized: boolean;
   reason?: string;
+  provider: CompactProviderKey;
   model: string;
   turns: number;
   missing: number;
-  truncated?: boolean;
+  outputTruncated?: boolean;
   estimatedInputTokens: number;
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number | null };
+  usage?: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null };
+}
+
+interface ProviderStatus {
+  key: CompactProviderKey;
+  label: string;
+  local: boolean;
+  available: boolean;
+  reason?: string;
+  models: CompactModel[];
 }
 
 const LENGTHS: Array<{ key: CompactLength; label: string }> = [
@@ -186,9 +198,12 @@ function OutputPanel({ result }: { result: Result }) {
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="eyebrow">Compacted output</span>
         <span className="mono text-[11px] text-ink-2">
-          {result.summarized ? result.model : 'assembled record — no model'}
+          {result.summarized ? `${result.model} · ${result.provider}` : 'assembled record — no model'}
           {' · '}
-          {result.usage
+          {/* Real counts when a model ran and reported them — the Anthropic
+              usage block, or Ollama's own eval counts. The char/4 estimate is
+              labelled as one, so the two are never read as the same thing. */}
+          {result.usage?.outputTokens != null
             ? `${compactNum(result.usage.outputTokens)} tokens out`
             : `~${compactNum(result.estimatedInputTokens)} tokens (est.)`}
         </span>
@@ -213,7 +228,7 @@ function OutputPanel({ result }: { result: Result }) {
           {result.reason}
         </p>
       )}
-      {result.truncated && (
+      {result.outputTruncated && (
         <p className="mb-2 text-xs text-warn">
           The model hit its output limit — this block is cut off at the end.
         </p>
@@ -240,7 +255,10 @@ function Modal({
   setWorking: (working: boolean) => void;
 }) {
   const { entries, add, move, clear, setOpen } = useCompact();
-  const [model, setModel] = useState(DEFAULT_COMPACT_MODEL);
+  // "provider:model", so one <select> can span both lists without the two
+  // halves of the choice ever drifting apart.
+  const [choice, setChoice] = useState(`${DEFAULT_COMPACT_PROVIDER}:${DEFAULT_COMPACT_MODEL}`);
+  const [providers, setProviders] = useState<ProviderStatus[] | null>(null);
   const [length, setLength] = useState<CompactLength>('brief');
   const [parts, setParts] = useState<CompactPart[]>(DEFAULT_PARTS);
   const [result, setResult] = useState<Result | null>(null);
@@ -250,6 +268,8 @@ function Modal({
 
   const totals = trayTotals(entries);
   const enabled = entries.filter((e) => e.enabled);
+  const chosenProvider = providers?.find((p) => p.key === choice.slice(0, choice.indexOf(':')));
+  const chosenModel = chosenProvider?.models.find((m) => m.id === choice.slice(choice.indexOf(':') + 1));
 
   const close = useCallback(() => {
     abort.current?.abort();
@@ -282,6 +302,35 @@ function Modal({
 
   useEffect(() => () => abort.current?.abort(), []);
 
+  // Asked for when the panel opens, not at build time: which Ollama models
+  // exist is a fact about this machine right now, and the daemon may have been
+  // started since the page loaded.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/compact/models', { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data: { providers?: ProviderStatus[] }) => {
+        const list = data.providers ?? [];
+        setProviders(list);
+        // Move off the default only if it is not actually available, so the
+        // panel opens on something that can run rather than on a dead choice.
+        const usable = list.filter((p) => p.available && p.models.length > 0);
+        const current = list.find((p) => p.key === choice.split(':')[0]);
+        const stillThere = current?.available && current.models.some((m) => m.id === choice.slice(choice.indexOf(':') + 1));
+        if (!stillThere && usable[0]?.models[0]) {
+          setChoice(`${usable[0].key}:${usable[0].models[0].id}`);
+        }
+      })
+      .catch(() => {
+        // The dropdown falls back to the built-in Anthropic list; assembly
+        // does not depend on this call at all.
+      });
+    return () => controller.abort();
+    // Deliberately once per open: re-running on every choice change would
+    // fight the user's own selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const submit = async () => {
     if (enabled.length === 0 || parts.length === 0) return;
     const controller = new AbortController();
@@ -296,7 +345,8 @@ function Modal({
           turnIds: enabled.map((e) => e.ref.id),
           parts,
           length,
-          model,
+          provider: choice.slice(0, choice.indexOf(':')),
+          model: choice.slice(choice.indexOf(':') + 1),
         }),
         signal: controller.signal,
       });
@@ -419,15 +469,30 @@ function Modal({
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Select
               label="Compact with"
-              value={model}
-              onChange={setModel}
-              title={COMPACT_MODELS.find((m) => m.id === model)?.note}
+              value={choice}
+              onChange={setChoice}
+              title={chosenModel?.note ?? 'Which model writes the summary. The block itself is always assembled locally.'}
             >
-              {COMPACT_MODELS.map((m) => (
-                <option key={m.id} value={m.id} title={m.note}>
-                  {m.label}
-                </option>
-              ))}
+              {/* Until the list arrives, the built-in Anthropic models are the
+                  only ones that can be named without asking the machine. */}
+              {providers === null ? (
+                <option value={choice}>{choice.slice(choice.indexOf(':') + 1)}</option>
+              ) : (
+                providers.map((p) => (
+                  <optgroup key={p.key} label={p.available ? p.label : `${p.label} — unavailable`}>
+                    {p.models.map((m) => (
+                      <option key={`${p.key}:${m.id}`} value={`${p.key}:${m.id}`} title={m.note}>
+                        {m.label}
+                      </option>
+                    ))}
+                    {p.models.length === 0 && (
+                      <option value={`${p.key}:`} disabled>
+                        {p.reason ?? 'none available'}
+                      </option>
+                    )}
+                  </optgroup>
+                ))
+              )}
             </Select>
 
             <Select label="Length" value={length} onChange={(v) => setLength(v as CompactLength)}>
@@ -464,6 +529,24 @@ function Modal({
             ))}
             {parts.length === 0 && <span className="text-xs text-warn">Pick at least one.</span>}
           </div>
+
+          {/*
+            The one thing worth saying out loud before the button is pressed.
+            Everything else in this dashboard is local by construction — the
+            header pill says so — and summarising is the single step that can
+            change that. Which way it goes depends entirely on this dropdown.
+          */}
+          {chosenProvider && (
+            <p className={`mt-2 text-[11px] ${chosenProvider.local ? 'text-ink-3' : 'text-warn'}`}>
+              {chosenProvider.local
+                ? `Runs on this machine — the block stays local.${
+                    chosenModel?.contextTokens
+                      ? ` ${chosenModel.label} holds ${chosenModel.contextTokens.toLocaleString('en-US')} tokens; a block too big for it is refused rather than quietly cut.`
+                      : ''
+                  }`
+                : 'Sends the selected prompts and responses to the Anthropic API, and bills this key for the call.'}
+            </p>
+          )}
 
           {error && (
             <p className="mt-3 flex items-start gap-2 rounded-lg border border-del/40 bg-del-bg px-3 py-2 text-xs text-del">

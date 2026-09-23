@@ -100,22 +100,66 @@ export const BUDGETS: Record<CompactLength, Budget> = {
  * `BetaFallbacksParam = Array<BetaFallbackParam> | 'default'`, and
  * 'server-side-fallback-2026-07-01' is a member of `AnthropicBeta`.
  */
+/**
+ * Which service runs the summary.
+ *
+ * `local` is not decoration. The rest of this dashboard never makes an outbound
+ * request, and the header says "localhost — nothing here leaves this machine".
+ * Sending a block of prompts to a remote API breaks that; sending it to Ollama
+ * on this machine does not. The panel groups the dropdown by this flag and says
+ * so, because it is the difference that actually matters when the thing being
+ * summarised is every prompt you have typed.
+ */
+export type CompactProviderKey = 'anthropic' | 'ollama';
+
+export const COMPACT_PROVIDERS: Record<CompactProviderKey, { label: string; local: boolean }> = {
+  anthropic: { label: 'Anthropic API', local: false },
+  ollama: { label: 'Ollama (this machine)', local: true },
+};
+
 export interface CompactModel {
+  provider: CompactProviderKey;
+  /** The provider's own model id, sent verbatim. */
   id: string;
   label: string;
   note: string;
-  effort: boolean;
-  fallback: boolean;
+  /** Anthropic only — see below. */
+  effort?: boolean;
+  fallback?: boolean;
+  /**
+   * Ollama only: the context window the model was built with, from its own
+   * /api/tags entry. Null when Ollama did not report one.
+   */
+  contextTokens?: number | null;
 }
 
-export const COMPACT_MODELS: ReadonlyArray<CompactModel> = [
-  { id: 'claude-opus-5', label: 'claude-opus-5', note: 'Default. Best judgement about what mattered in a run.', effort: true, fallback: true },
-  { id: 'claude-sonnet-5', label: 'claude-sonnet-5', note: 'Cheaper, still strong on summarisation.', effort: true, fallback: false },
-  { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5', note: 'Cheapest and fastest. 200K context, so long runs may not fit.', effort: false, fallback: false },
-  { id: 'claude-fable-5-1', label: 'claude-fable-5-1', note: 'Most capable, and the most expensive.', effort: true, fallback: true },
+/**
+ * The Anthropic models offered in the panel.
+ *
+ * Two capability flags rather than one list, because the request shape differs
+ * per model and getting it wrong is a 400, not a degradation:
+ *
+ *  - `effort`: `output_config.effort` is accepted on the Claude 5 family and
+ *    rejected on Haiku 4.5, so it is only sent where it is supported.
+ *  - `fallback`: the server-side refusal fallback chain, which the API
+ *    documents for the Opus 5 and Fable tiers.
+ *
+ * Verified against @anthropic-ai/sdk 0.128.0's own types on 2026-09-23:
+ * `BetaFallbacksParam = Array<BetaFallbackParam> | 'default'`, and
+ * 'server-side-fallback-2026-07-01' is a member of `AnthropicBeta`.
+ *
+ * Ollama models are NOT listed here. They are whatever the user has pulled, so
+ * they are discovered from the daemon at request time rather than guessed.
+ */
+export const ANTHROPIC_MODELS: ReadonlyArray<CompactModel> = [
+  { provider: 'anthropic', id: 'claude-opus-5', label: 'claude-opus-5', note: 'Default. Best judgement about what mattered in a run.', effort: true, fallback: true },
+  { provider: 'anthropic', id: 'claude-sonnet-5', label: 'claude-sonnet-5', note: 'Cheaper, still strong on summarisation.', effort: true, fallback: false },
+  { provider: 'anthropic', id: 'claude-haiku-4-5', label: 'claude-haiku-4-5', note: 'Cheapest and fastest. 200K context, so long runs may not fit.', effort: false, fallback: false },
+  { provider: 'anthropic', id: 'claude-fable-5-1', label: 'claude-fable-5-1', note: 'Most capable, and the most expensive.', effort: true, fallback: true },
 ];
 
 export const DEFAULT_COMPACT_MODEL = 'claude-opus-5';
+export const DEFAULT_COMPACT_PROVIDER: CompactProviderKey = 'anthropic';
 
 /**
  * Effort follows the length the user asked for.
@@ -129,6 +173,85 @@ export const EFFORT_BY_LENGTH: Record<CompactLength, 'low' | 'medium' | 'high'> 
   standard: 'medium',
   detailed: 'high',
 };
+
+/** Room to leave for the summary itself, by the length asked for. */
+export const OUTPUT_TOKENS_BY_LENGTH: Record<CompactLength, number> = {
+  brief: 800,
+  standard: 2000,
+  detailed: 4000,
+};
+
+export interface ContextPlan {
+  /** Prompt estimate, corrected and with room for the answer, in tokens. */
+  needed: number;
+  /** What to ask Ollama to load the model with. */
+  numCtx: number;
+  /** False when the block cannot fit this model's window at all. */
+  fits: boolean;
+}
+
+/**
+ * How badly `estimateTokens` undercounts a block of this kind.
+ *
+ * Measured against qwen2.5-coder's own `prompt_eval_count` on 2026-09-23:
+ *
+ *   estimate 1,114 → actual 1,765   (1.58×)
+ *   estimate 2,143 → actual 3,250   (1.52×)
+ *
+ * Four characters per token is a rule of thumb for prose. A compacted block is
+ * absolute file paths, shell commands and diff punctuation, which tokenise far
+ * more densely. Sizing the window off the raw estimate would ask for a window
+ * about a third too small — and Ollama's response to a prompt that does not fit
+ * is to drop the front of it and report success.
+ *
+ * 1.8 sits above both measurements with room to spare. Erring high costs some
+ * memory; erring low costs a summary of a run the model only partly read.
+ */
+const TOKEN_ESTIMATE_HEADROOM = 1.8;
+
+/**
+ * How big a context window to ask Ollama for, and whether the block fits.
+ *
+ * This exists because of a failure observed on this machine on 2026-09-23: a
+ * ~4,600-token prompt sent with `num_ctx: 512` came back HTTP 200, with
+ * `done_reason: "stop"`, `prompt_eval_count: 258`, and a confident wrong
+ * answer. Ollama drops whatever does not fit and says nothing — no error, no
+ * flag, no truncation notice. Left alone, the panel would summarise a quarter
+ * of a run and present it as the whole.
+ *
+ * So the window is always set explicitly from the model's own reported context
+ * length rather than left to Ollama's default, and a block that cannot fit is
+ * refused up front instead of being quietly halved.
+ *
+ * `numCtx` is rounded up to a 1024 boundary and floored at 4096 — below that,
+ * loading gains nothing and the prompt is at risk again.
+ */
+export function planOllamaContext(
+  blockTokens: number,
+  modelContext: number | null | undefined,
+  length: CompactLength,
+): ContextPlan {
+  const needed =
+    Math.ceil(blockTokens * TOKEN_ESTIMATE_HEADROOM) + OUTPUT_TOKENS_BY_LENGTH[length];
+  const rounded = Math.max(4096, Math.ceil(needed / 1024) * 1024);
+  // No reported context length means no basis to refuse on; ask for what is
+  // needed and let the post-call truncation check be the backstop.
+  if (!modelContext || modelContext <= 0) return { needed, numCtx: rounded, fits: true };
+  return { needed, numCtx: Math.min(rounded, modelContext), fits: needed <= modelContext };
+}
+
+/**
+ * Did Ollama silently drop the front of the prompt?
+ *
+ * A prompt that filled the window exactly is the signature: Ollama evaluates
+ * right up to `num_ctx` and stops, reporting success. Compared against the
+ * window rather than against the estimate, because the char/4 estimate is not
+ * accurate enough to accuse the daemon on its own.
+ */
+export function looksTruncated(promptEvalCount: number | undefined, numCtx: number): boolean {
+  if (typeof promptEvalCount !== 'number') return false;
+  return promptEvalCount >= numCtx - 8;
+}
 
 export interface CompactCommand {
   seq: number;

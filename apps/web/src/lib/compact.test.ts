@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import {
   assembleContext,
   estimateTokens,
+  looksTruncated,
+  planOllamaContext,
   stripIdeBlock,
   type CompactTurn,
 } from './compact.js';
@@ -139,4 +141,64 @@ test('an empty selection assembles to nothing at all', () => {
 test('the token figure is an estimate over characters', () => {
   assert.equal(estimateTokens('abcd'), 1);
   assert.equal(estimateTokens('abcde'), 2);
+});
+
+/**
+ * The Ollama guards.
+ *
+ * Measured on this machine on 2026-09-23, Ollama 0.34.2: a ~4,600-token prompt
+ * sent with num_ctx 512 returned HTTP 200, done_reason "stop",
+ * prompt_eval_count 258, and a wrong answer stated as fact. Nothing in the
+ * response says the prompt was cut. These two functions are the only thing
+ * standing between that behaviour and a context block that claims to cover
+ * turns the model never saw.
+ */
+
+test('the plan corrects for how badly chars/4 undercounts a block', () => {
+  // Measured 1.52x and 1.58x against qwen2.5-coder's own prompt_eval_count on
+  // 2026-09-23. A plan that trusted the raw estimate would size the window a
+  // third too small, and Ollama drops the overflow without a word.
+  const plan = planOllamaContext(1000, 131072, 'brief');
+  assert.equal(plan.needed, 1800 + 800);
+  assert.ok(plan.needed > 1000 * 1.58, 'must clear the worst ratio actually observed');
+});
+
+test('a block that cannot fit the model window is refused, not sent', () => {
+  // 2,000 estimated is ~3,600 real; +800 for the answer clears 4,096.
+  const plan = planOllamaContext(2000, 4096, 'brief');
+  assert.equal(plan.fits, false);
+});
+
+test('a block that fits asks for a window big enough to hold it', () => {
+  const plan = planOllamaContext(10000, 32768, 'standard'); // 18,000 + 2,000
+  assert.equal(plan.fits, true);
+  assert.equal(plan.numCtx, 20480); // 20,000 rounded up to a 1024 boundary
+  assert.ok(plan.numCtx >= plan.needed, 'the window must hold the whole prompt');
+});
+
+test('the window never exceeds what the model actually has', () => {
+  const plan = planOllamaContext(200000, 32768, 'detailed');
+  assert.equal(plan.numCtx, 32768);
+  assert.equal(plan.fits, false);
+});
+
+test('a tiny block still asks for a usable window', () => {
+  // Below 4096 there is nothing to gain and the prompt is at risk again.
+  assert.equal(planOllamaContext(10, 131072, 'brief').numCtx, 4096);
+});
+
+test('a model that reports no context length is attempted, not blocked', () => {
+  const plan = planOllamaContext(50000, null, 'brief');
+  assert.equal(plan.fits, true);
+  assert.ok(plan.numCtx >= plan.needed);
+});
+
+test('a prompt that filled the whole window is treated as truncated', () => {
+  assert.equal(looksTruncated(4096, 4096), true);
+  assert.equal(looksTruncated(4090, 4096), true);
+});
+
+test('a prompt with room to spare is not accused of truncation', () => {
+  assert.equal(looksTruncated(258, 4096), false);
+  assert.equal(looksTruncated(undefined, 4096), false);
 });

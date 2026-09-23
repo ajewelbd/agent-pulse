@@ -1,17 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextResponse } from 'next/server';
 import {
+  ANTHROPIC_MODELS,
   BUDGETS,
-  COMPACT_MODELS,
   COMPACT_PARTS,
   EFFORT_BY_LENGTH,
+  OUTPUT_TOKENS_BY_LENGTH,
   assembleContext,
   compactionPrompt,
   estimateTokens,
+  looksTruncated,
+  planOllamaContext,
   type CompactLength,
   type CompactPart,
   type CompactTurn,
 } from '@/lib/compact';
+import { listOllamaModels, ollamaBaseUrl, ollamaChat } from '@/lib/ollama';
 import {
   COMPACT_TURN_LIMIT,
   getCompactCommands,
@@ -42,8 +46,9 @@ interface Body {
   turnIds?: unknown;
   parts?: unknown;
   length?: unknown;
+  provider?: unknown;
   model?: unknown;
-  /** False runs assembly only, even when a key is configured. */
+  /** False runs assembly only, even when a model is configured. */
   summarize?: unknown;
 }
 
@@ -84,7 +89,8 @@ export async function POST(request: Request) {
     ? body.length
     : 'standard') as CompactLength;
 
-  const model = COMPACT_MODELS.find((m) => m.id === body.model) ?? COMPACT_MODELS[0]!;
+  const provider = body.provider === 'ollama' ? 'ollama' : 'anthropic';
+  const requestedModel = typeof body.model === 'string' ? body.model : '';
 
   // ---- Stage 1: assembly. Always runs. ------------------------------------
 
@@ -128,21 +134,29 @@ export async function POST(request: Request) {
 
   const assembled = assembleContext(material, { parts, length });
 
+  const blockTokens = estimateTokens(assembled);
   const base = {
     assembled,
     turns: material.length,
     missing: ids.length - material.length,
-    model: model.id,
+    provider,
+    model: requestedModel,
     length,
     parts,
-    estimatedInputTokens: estimateTokens(assembled),
+    estimatedInputTokens: blockTokens,
   };
 
   if (body.summarize === false) {
     return NextResponse.json({ ...base, output: assembled, summarized: false, reason: 'assembly only — no model was asked to run' });
   }
 
+  const { system, user } = compactionPrompt(assembled, length);
+
   // ---- Stage 2: summarisation. Optional, and allowed to fail. -------------
+
+  if (provider === 'ollama') {
+    return summariseWithOllama({ base, assembled, blockTokens, length, requestedModel, system, user });
+  }
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({
@@ -153,7 +167,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const { system, user } = compactionPrompt(assembled, length);
+  const model = ANTHROPIC_MODELS.find((m) => m.id === requestedModel) ?? ANTHROPIC_MODELS[0]!;
   const common = {
     model: model.id,
     max_tokens: MAX_OUTPUT_TOKENS,
@@ -210,7 +224,7 @@ export async function POST(request: Request) {
       // The model that actually answered, which is not necessarily the one
       // asked for — a fallback may have served the turn.
       model: response.model,
-      truncated: response.stop_reason === 'max_tokens',
+      outputTruncated: response.stop_reason === 'max_tokens',
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
@@ -232,5 +246,105 @@ export async function POST(request: Request) {
       summarized: false,
       reason: `No model ran — ${reason}. The assembled record is below, unchanged.`,
     });
+  }
+}
+
+/**
+ * The Ollama path.
+ *
+ * Structurally the same contract as the Anthropic one — the assembled block
+ * comes back whatever happens, with a reason when no summary did — but with one
+ * extra job the hosted API does not need: proving the model actually read the
+ * whole block.
+ *
+ * Ollama does not refuse an over-long prompt. It drops the overflow and returns
+ * HTTP 200 with `done_reason: "stop"`, which is indistinguishable from success.
+ * Observed here on 2026-09-23: 4,600 tokens in, 258 evaluated, a confident
+ * wrong answer out. So the fit is checked before the call from the model's own
+ * reported context length, and the daemon's own `prompt_eval_count` is checked
+ * against the window after it. Either check failing means the record is
+ * returned instead of a summary nobody could trust.
+ */
+async function summariseWithOllama(args: {
+  base: Record<string, unknown>;
+  assembled: string;
+  blockTokens: number;
+  length: CompactLength;
+  requestedModel: string;
+  system: string;
+  user: string;
+}) {
+  const { base, assembled, blockTokens, length, requestedModel, system, user } = args;
+  const record = (reason: string) =>
+    NextResponse.json({ ...base, output: assembled, summarized: false, reason });
+
+  let available;
+  try {
+    available = await listOllamaModels(AbortSignal.timeout(2500));
+  } catch {
+    return record(
+      `No Ollama daemon at ${ollamaBaseUrl()}, so no model ran. Start one with \`ollama serve\`. The assembled record is below, unchanged.`,
+    );
+  }
+
+  // Matched against what the daemon actually has: the tray can outlive a model
+  // being removed, and asking for a missing one returns a 404 that reads like a
+  // bug rather than a stale choice.
+  const model = available.find((m) => m.id === requestedModel);
+  if (!model) {
+    return record(
+      `Ollama has no model called "${requestedModel}". Pull it, or pick another. The assembled record is below, unchanged.`,
+    );
+  }
+
+  const plan = planOllamaContext(blockTokens, model.contextTokens, length);
+  if (!plan.fits) {
+    return record(
+      `This block needs about ${plan.needed.toLocaleString('en-US')} tokens and ${model.id} holds ` +
+        `${(model.contextTokens ?? 0).toLocaleString('en-US')}. Ollama would drop the overflow without saying so, ` +
+        `so nothing was sent. Use a shorter Length, fewer turns, or a model with a bigger context. ` +
+        `The assembled record is below, unchanged.`,
+    );
+  }
+
+  try {
+    const result = await ollamaChat({
+      model: model.id,
+      system,
+      user,
+      numCtx: plan.numCtx,
+      numPredict: OUTPUT_TOKENS_BY_LENGTH[length],
+    });
+
+    // The backstop for everything the pre-check could not know — a tokenizer
+    // denser than the estimate assumed, a template longer than expected.
+    if (looksTruncated(result.promptEvalCount, plan.numCtx)) {
+      return record(
+        `${model.id} filled its whole ${plan.numCtx.toLocaleString('en-US')}-token window with the prompt, which means ` +
+          `Ollama dropped part of it. Any summary would cover only some of these turns, so it is not shown. ` +
+          `The assembled record is below, unchanged.`,
+      );
+    }
+
+    if (!result.content) {
+      return record(`${model.id} returned no text. The assembled record is below, unchanged.`);
+    }
+
+    return NextResponse.json({
+      ...base,
+      output: result.content,
+      summarized: true,
+      model: model.id,
+      outputTruncated: result.doneReason === 'length',
+      // Real counts from the daemon, not the char/4 estimate.
+      usage: {
+        inputTokens: result.promptEvalCount ?? null,
+        outputTokens: result.evalCount ?? null,
+        cacheReadTokens: null,
+      },
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown error';
+    return record(`No model ran — ${reason}. The assembled record is below, unchanged.`);
   }
 }

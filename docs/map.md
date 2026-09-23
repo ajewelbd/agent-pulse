@@ -119,12 +119,14 @@ attachment's bytes, and that compaction.
 | `src/lib/compact.ts` | Folds a run of turns into one context block — pure, no DB, no network |
 | `src/lib/compact.test.ts` | The four ways a block could lie: false zero, false success, silent abridgement, lost provenance |
 | `src/lib/compactRef.ts` | A list row reduced to what the compaction tray shows, formatted server-side |
+| `src/lib/ollama.ts` | The local-model path — shapes read off a running daemon, not recalled |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
 | `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
 | `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
 | `src/app/turns/[id]/attachment/[idx]/route.ts` | One attached screenshot or document, decoded |
 | `src/app/aggregates/page.tsx` | Rollups by day / project / agent / provider / model / branch |
-| `src/app/api/compact/route.ts` | Assembles the block from the DB, then optionally asks Claude to summarise it |
+| `src/app/api/compact/route.ts` | Assembles the block from the DB, then optionally asks a model to summarise it |
+| `src/app/api/compact/models/route.ts` | Which models can run right now — Anthropic's fixed list, Ollama's discovered |
 | `src/app/healthz/route.ts` | `SELECT 1`; 503 on failure |
 | `src/app/layout.tsx`, `globals.css`, `not-found.tsx` | Shell and theme |
 | `src/components/TurnFilters.tsx` | Plain GET form — filter state lives in the URL, so views are linkable |
@@ -153,9 +155,8 @@ It runs in **two stages, and they must not be confused with each other:**
 
 1. **Assembly** — `lib/compact.ts` builds the block out of the database rows.
    Pure, local, no network, and always runs. This is the product.
-2. **Summarisation** — `api/compact/route.ts` optionally hands that block to
-   Claude. Requires `ANTHROPIC_API_KEY`; it is the only outbound request the
-   dashboard makes, and it happens only when someone presses the button.
+2. **Summarisation** — `api/compact/route.ts` optionally hands that block to a
+   model, and only when someone presses the button.
 
 If stage 2 is unconfigured, refused, empty or fails, the response still carries
 the stage-1 block and a `reason` saying what happened, which the panel prints
@@ -168,6 +169,34 @@ is "—", an unpriced turn is "not priced", a missing exit code is "exit unknown
 Every budget that bites is announced in the text (`[clipped — N more
 characters]`, `… N more not listed at this length`), because a block that
 quietly dropped half a response would be read later as the whole of it.
+
+#### Two providers, and the difference is not cosmetic
+
+| | Anthropic (`ANTHROPIC_API_KEY`) | Ollama (`OLLAMA_BASE_URL`) |
+|---|---|---|
+| Models | Fixed list in `ANTHROPIC_MODELS` | Discovered from `/api/tags` per request |
+| Data | Leaves the machine | Stays on it, unless the model is `:cloud` |
+| Cost | Billed per press | Free, slower |
+
+The dropdown groups by provider and the panel states which side of that line
+the current choice sits on, because the header pill promises "nothing here
+leaves this machine" and summarising is the one step that can break it. An
+Ollama `:cloud` model is proxied through ollama.com and is labelled as leaving.
+
+**Ollama truncates silently, and the code is built around that.** It does not
+refuse a prompt bigger than the loaded context window — it drops the overflow
+and returns HTTP 200 with `done_reason: "stop"`. Measured here on 2026-09-23
+(Ollama 0.34.2): 4,600 tokens in, `prompt_eval_count: 258`, a confident wrong
+answer out, nothing in the response indicating a problem. So:
+
+- `num_ctx` is always set explicitly from the model's own reported
+  `context_length`, never left to the daemon's default.
+- `planOllamaContext()` multiplies the char/4 estimate by **1.8** before
+  checking the fit. Measured on real blocks, chars/4 undercounts by 1.52–1.58×
+  — they are mostly absolute paths, commands and diff punctuation, which
+  tokenise densely. A block that still does not fit is refused, not sent.
+- `looksTruncated()` is the backstop: a `prompt_eval_count` that reached the
+  window means the front was dropped, and the summary is withheld.
 
 ### The session filter
 
@@ -301,7 +330,9 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 | change how a cost is explained on screen | `apps/web/src/lib/cost.ts` — **and keep it a mirror of `ingest.ts` → `computeCost()`** |
 | change how a token count is explained, or rendered when absent | `apps/web/src/lib/tokens.ts` and `format.ts` → `tokenCount()` |
 | change what a compacted block contains, or how it says it abridged something | `apps/web/src/lib/compact.ts` — **and add a case to its test** |
-| add a model to the compact panel's dropdown | `COMPACT_MODELS` in `apps/web/src/lib/compact.ts` — set `effort`/`fallback` from that model's own docs, not by analogy |
+| add an Anthropic model to the compact dropdown | `ANTHROPIC_MODELS` in `apps/web/src/lib/compact.ts` — set `effort`/`fallback` from that model's own docs, not by analogy |
+| add an Ollama model to the compact dropdown | `ollama pull <model>` — the panel discovers it; nothing to edit |
+| add a third compaction provider | `lib/ollama.ts` as the template, a branch in `api/compact/route.ts`, an entry in `api/compact/models` — **and verify its truncation behaviour before trusting a response** |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |
 | understand why a turn has no provider | `reconciler.ts` → `applyProviderAttribution()` |
