@@ -60,9 +60,10 @@ typecheck: ## Typecheck every package
 
 test: ## Run unit tests
 	pnpm --filter @aiuo/collector run test
+	pnpm --filter @aiuo/web run test
 
 build: ## Build every package
 	pnpm -r run build
 
 clean: ## Remove build output
-	rm -rf packages/*/dist apps/*/dist
+	rm -rf packages/*/dist apps/*/dist apps/web/.test-out

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .next/
+.test-out/
 *.tsbuildinfo
 
 # Never commit a real .env — it holds COLLECTOR_SHARED_SECRET and DB creds.

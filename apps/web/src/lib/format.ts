@@ -98,34 +98,6 @@ export function utcLong(value: Date | string | null | undefined): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${utcClock(d)} UTC`;
 }
 
-/**
- * Claude Code prefixes a turn with an editor block when the file in focus or
- * the selection changed. It is boilerplate the user never typed, and it is long
- * enough to hide the actual request behind it.
- *
- * Verified against the prompt_text actually stored (2026-09-22): these are the
- * only two leading tags in this archive, each is closed, and every one of the
- * 207 carries the real request after it — so this splits rather than replaces.
- * `rest` is what the user wrote; `path` is null when the block named no file.
- */
-export function ideContext(
-  prompt: string | null | undefined,
-): { kind: string; path: string | null; rest: string } | null {
-  if (!prompt) return null;
-  const match = /^<(ide_opened_file|ide_selection)>([\s\S]*?)<\/\1>/.exec(prompt);
-  if (!match) return null;
-  // Two phrasings, verified against stored prompts: "opened the file X in the
-  // IDE." and "selected the lines N to M from X:". Paths contain spaces on this
-  // machine ("/Volumes/Macintosh HD 1/…"), so both captures are non-greedy up
-  // to their own terminator rather than to whitespace.
-  const body = match[2]!;
-  const path =
-    /opened the file (.+?) in the IDE\./.exec(body)?.[1] ??
-    /from (.+?):\s/.exec(body)?.[1] ??
-    null;
-  return { kind: match[1]!, path, rest: prompt.slice(match[0].length).trim() };
-}
-
 /** Last `keep` path segments, ellipsised at the front — the tail is what identifies a file. */
 export function tailPath(path: string, keep = 3): string {
   const parts = path.split('/').filter(Boolean);

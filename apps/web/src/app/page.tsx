@@ -30,18 +30,34 @@ const TH = 'px-3 py-2.5 text-left font-medium';
  * The editor-focus block is already stripped in SQL, so what lands here is what
  * the user actually typed. The badge is kept because that block was part of the
  * turn — it is context the model was paid to read, and a row that hides it
- * entirely would understate why the turn cost what it did.
+ * entirely would understate why the turn cost what it did. Which block it was
+ * matters too: a selection is a deliberate act, an open file is not.
+ *
+ * Screenshots are not flagged here — see the note in listTurns(). The turn
+ * detail page shows them, with previews.
  */
+const IDE_BADGE: Record<string, { label: string; title: string }> = {
+  ide_selection: {
+    label: 'selection',
+    title: 'The user had lines selected in the editor; they were sent with this prompt.',
+  },
+  ide_opened_file: {
+    label: 'ide context',
+    title: 'This turn was also given the file open in the editor at the time.',
+  },
+};
+
 function PromptCell({ turn }: { turn: TurnListRow }) {
   const text = turn.prompt_preview?.trim();
+  const badge = turn.ide_kind ? IDE_BADGE[turn.ide_kind] : undefined;
   return (
     <span className="flex items-baseline gap-2">
-      {turn.had_ide_context && (
+      {badge && (
         <span
-          title="This turn was also given the file open in the editor at the time."
+          title={badge.title}
           className="mono shrink-0 rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
         >
-          ide context
+          {badge.label}
         </span>
       )}
       {text ? (

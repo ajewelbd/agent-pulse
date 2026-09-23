@@ -99,23 +99,52 @@ logs a warning rather than silently ingesting nothing.
 
 ## `apps/web` — the dashboard
 
-Read-only. Server components only; no client data fetching, no API layer.
+Read-only. Rendering is server components throughout; no client data fetching.
+The only route handlers are the three that must return something other than a
+page — health, the JSON export, and one prompt attachment's bytes.
 
 | File | Responsibility |
 |---|---|
 | `src/lib/db.ts` | Lazy read-only pool (`default_transaction_read_only=on`) |
 | `src/lib/queries.ts` | **Every** SQL statement the UI runs, in one place |
 | `src/lib/format.ts` | Display rules, all enforcing "absence is not zero" |
+| `src/lib/attachments.ts` | Recovers what the user attached to a prompt from the stored text |
+| `src/lib/attachments.test.ts` | Parser regression cases, every fixture a real stored prompt |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
-| `src/app/turns/[id]/page.tsx` | Turn detail: prompt, response, commands, diffs |
+| `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
+| `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
+| `src/app/turns/[id]/attachment/[idx]/route.ts` | One attached screenshot or document, decoded |
 | `src/app/aggregates/page.tsx` | Rollups by day / project / agent / provider / model / branch |
 | `src/app/healthz/route.ts` | `SELECT 1`; 503 on failure |
 | `src/app/layout.tsx`, `globals.css`, `not-found.tsx` | Shell and theme |
 | `src/components/TurnFilters.tsx` | Plain GET form — filter state lives in the URL, so views are linkable |
 | `src/components/CommandTimeline.tsx` | Per-turn command list; NULL exit renders "unknown" |
 | `src/components/DiffView.tsx` | Diff-syntax rendering, collapsed by default |
+| `src/components/PromptAttachments.tsx` | The rail beside the prompt: screenshots, selection, open file, mentions |
+| `src/components/ImagePreview.tsx` | Screenshot thumbnail + full-size preview overlay |
 | `src/components/HealthBanner.tsx` | States where the numbers are incomplete, and what to do about each |
 | `src/components/Chips.tsx` | Provenance chips — every one exists to make a *known unknown* visible |
+
+### Prompt attachments
+
+What the user sent with a prompt is not one thing, and it is not stored in one
+place:
+
+| Kind | Where it lives | How it is recovered |
+|---|---|---|
+| editor selection (path + line range + text) | inside `turns.prompt_text` | `parsePrompt()` |
+| file open in the editor | inside `turns.prompt_text` | `parsePrompt()` |
+| `@path` mention | inside `turns.prompt_text` | `parsePrompt()`, heuristic |
+| screenshot / document | only in `raw_events.payload` | `getPromptMedia()` |
+
+The text kinds are parsed from `prompt_text` rather than re-read from
+`raw_events` **because `prompt_text` is redacted and the raw payload is not**.
+Going back to the payload for them would route unredacted content to the page.
+
+Screenshots have no redacted copy, so they can only come from the raw event.
+They are shown on the turn detail page and never counted on the list: doing so
+detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
+(EXPLAIN ANALYZE, 2026-09-22). Same rule that keeps diff bodies out of lists.
 
 ## `scripts`
 
@@ -145,6 +174,7 @@ Read-only. Server components only; no client data fetching, no API layer.
 | change what a turn's cost is | `ingest.ts` → `computeCost()`, and the rates in migration 003 |
 | add or fix a redaction pattern | `packages/schema/src/redaction.ts` — **and bump `version`** |
 | change what the dashboard queries | `apps/web/src/lib/queries.ts`, nowhere else |
+| change how prompt attachments are recognised | `apps/web/src/lib/attachments.ts` — **and add a case to its test** |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |
 | understand why a turn has no provider | `reconciler.ts` → `applyProviderAttribution()` |

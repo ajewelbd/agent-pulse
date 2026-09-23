@@ -129,6 +129,27 @@ export const IconInfo = (p: P) => (
   <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8v.1" /></Svg>
 );
 
+export const IconPaperclip = (p: P) => (
+  <Svg {...p}><path d="M20 11.5 12.2 19.3a4.5 4.5 0 0 1-6.4-6.4l8.1-8.1a3 3 0 0 1 4.3 4.3l-8.1 8.1a1.5 1.5 0 0 1-2.2-2.2l7.4-7.4" /></Svg>
+);
+
+export const IconImage = (p: P) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.5" /><path d="m3 17 5-4.5 4 3.5 3-2.5 6 5" /></Svg>
+);
+
+/** A bracketed span of lines — an editor selection, not a whole file. */
+export const IconSelection = (p: P) => (
+  <Svg {...p}><path d="M8 4H5v16h3M16 4h3v16h-3M9 12h6" /></Svg>
+);
+
+export const IconClose = (p: P) => (
+  <Svg {...p}><path d="M6 6l12 12M18 6 6 18" /></Svg>
+);
+
+export const IconExpand = (p: P) => (
+  <Svg {...p}><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5" /></Svg>
+);
+
 /**
  * The app mark.
  *

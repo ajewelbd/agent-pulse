@@ -53,8 +53,11 @@ export interface TurnListRow extends Record<string, unknown> {
   cost_usd: string | null;
   cost_source: string;
   prompt_preview: string | null;
-  /** The turn also carried an editor-focus block, stripped from the preview. */
-  had_ide_context: boolean;
+  /**
+   * Which editor block the turn carried, stripped from the preview:
+   * 'ide_selection', 'ide_opened_file', or null for neither.
+   */
+  ide_kind: string | null;
   tool_call_count: string;
   file_change_count: string;
 }
@@ -146,7 +149,17 @@ export async function listTurns(
             left(ltrim(regexp_replace(t.prompt_text,
                    '^<(ide_opened_file|ide_selection)>.*?</\\1>', ''), E' \\t\\r\\n'), 240)
                                                             AS prompt_preview,
-            t.prompt_text ~ '^<(ide_opened_file|ide_selection)>' AS had_ide_context,
+            -- Which block it was, not merely that there was one: a selection
+            -- is something the user made, an open file is something the editor
+            -- sent on its own. Same regex as the strip above, so the badge and
+            -- the preview can never disagree.
+            --
+            -- Screenshots are NOT counted here. They live only in the raw
+            -- event's payload, and counting them per row detoasts every prompt
+            -- payload on the page: 276 ms for 25 rows against 2.3 ms as it
+            -- stands (EXPLAIN ANALYZE, 2026-09-22). They are shown on the turn
+            -- detail page, which fetches one turn deliberately.
+            substring(t.prompt_text from '^<(ide_opened_file|ide_selection)>') AS ide_kind,
             (SELECT count(*) FROM tool_calls tc WHERE tc.turn_id = t.id)   AS tool_call_count,
             (SELECT count(*) FROM file_changes fc WHERE fc.turn_id = t.id) AS file_change_count
        FROM turns t
@@ -284,6 +297,111 @@ export function getTurn(id: string): Promise<TurnDetail | null> {
        LEFT JOIN providers pr ON pr.id = t.provider_id
       WHERE t.id = $1::bigint`,
     [id],
+  );
+}
+
+export interface PromptMediaRow extends Record<string, unknown> {
+  /** 0-based position in the prompt record's content array — the route's handle. */
+  idx: number;
+  block_type: 'image' | 'document';
+  media_type: string | null;
+  source_type: string | null;
+  /** Decoded size, as an int4 (so `number`). NULL when nothing inline — not 0. */
+  byte_size: number | null;
+}
+
+/**
+ * The binary blocks the user attached to a prompt — screenshots and documents.
+ *
+ * These are the one thing a turn carries that `prompt_text` does not: they are
+ * content blocks on the prompt record, so the only copy is the raw event. The
+ * join is on `sessions.external_session_id || ':' || turns.external_turn_id`,
+ * which is exactly how the collector builds `raw_events.external_id` for a log
+ * record (adapters/claude-code.ts → recordExternalId). Verified on 2026-09-22:
+ * it matches all 15 image-carrying turns and the one document-carrying turn in
+ * this archive, with no misses.
+ *
+ * Metadata only — the base64 itself is never selected here. A single prompt in
+ * this archive carries a 4.9 MB PDF, and the detail page renders a card for it,
+ * not its bytes. Those come one at a time from `getPromptMediaBlock()`.
+ *
+ * This is deliberately NOT done on the list page. Counting these per row costs
+ * a full detoast of every prompt payload: measured 276 ms for 25 rows against
+ * 2.3 ms for the list as it stands (EXPLAIN ANALYZE, 2026-09-22). That is the
+ * same rule that keeps diff bodies out of list queries.
+ */
+export function getPromptMedia(turnId: string): Promise<PromptMediaRow[]> {
+  return query<PromptMediaRow>(
+    `SELECT (b.idx - 1)::int                       AS idx,
+            b.block->>'type'                       AS block_type,
+            b.block->'source'->>'media_type'       AS media_type,
+            b.block->'source'->>'type'             AS source_type,
+            -- Exact decoded length from the base64 length, without decoding
+            -- megabytes to print a size. Verified against
+            -- octet_length(decode(...)) on every block in this archive.
+            CASE WHEN b.block->'source'->>'data' IS NULL THEN NULL
+                 ELSE length(b.block->'source'->>'data') / 4 * 3
+                      - (length(b.block->'source'->>'data')
+                         - length(rtrim(b.block->'source'->>'data', '=')))
+            END                                    AS byte_size
+       FROM turns t
+       JOIN sessions s ON s.id = t.session_id
+       JOIN raw_events re
+         ON re.agent_id = t.agent_id
+        AND re.layer = 'logs'
+        AND re.session_external_id = s.external_session_id
+        AND re.external_id = s.external_session_id || ':' || t.external_turn_id
+       CROSS JOIN LATERAL jsonb_array_elements(
+            -- The guard is inside the argument, not in WHERE: a LATERAL
+            -- function is not ordered after the filter, and
+            -- jsonb_array_elements raises on a non-array.
+            CASE WHEN jsonb_typeof(re.payload->'message'->'content') = 'array'
+                 THEN re.payload->'message'->'content' ELSE '[]'::jsonb END
+       ) WITH ORDINALITY AS b(block, idx)
+      WHERE t.id = $1::bigint
+        AND t.external_turn_id IS NOT NULL
+        AND b.block->>'type' IN ('image', 'document')
+      ORDER BY b.idx`,
+    [turnId],
+  );
+}
+
+export interface PromptMediaBlock extends Record<string, unknown> {
+  block_type: string;
+  media_type: string | null;
+  source_type: string | null;
+  /** Base64, as the agent recorded it. NULL for a block with no inline data. */
+  data: string | null;
+}
+
+/**
+ * One attached block's bytes, for the preview route.
+ *
+ * Fetched by index so the page can render a thumbnail per attachment without
+ * any of them travelling with the page itself.
+ */
+export function getPromptMediaBlock(turnId: string, idx: number): Promise<PromptMediaBlock | null> {
+  return queryOne<PromptMediaBlock>(
+    `SELECT b.block->>'type'                 AS block_type,
+            b.block->'source'->>'media_type' AS media_type,
+            b.block->'source'->>'type'       AS source_type,
+            b.block->'source'->>'data'       AS data
+       FROM turns t
+       JOIN sessions s ON s.id = t.session_id
+       JOIN raw_events re
+         ON re.agent_id = t.agent_id
+        AND re.layer = 'logs'
+        AND re.session_external_id = s.external_session_id
+        AND re.external_id = s.external_session_id || ':' || t.external_turn_id
+       CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(re.payload->'message'->'content') = 'array'
+                 THEN re.payload->'message'->'content' ELSE '[]'::jsonb END
+       ) WITH ORDINALITY AS b(block, idx)
+      WHERE t.id = $1::bigint
+        AND t.external_turn_id IS NOT NULL
+        AND b.idx - 1 = $2::int
+        AND b.block->>'type' IN ('image', 'document')`,
+    [turnId, idx],
   );
 }
 
