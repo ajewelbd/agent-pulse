@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { SearchHotkey } from './SearchHotkey';
 import { IconCalendar, IconChevronDown, IconFilter, IconSearch } from './icons';
-import { hasActiveFilters } from '@/lib/filters';
+import { filterQuery, hasActiveFilters } from '@/lib/filters';
 import { shortId, utcClock, utcDay } from '@/lib/format';
 import { SESSION_OPTION_LIMIT, type FilterOptions, type SessionOption, type TurnFilters } from '@/lib/queries';
 
@@ -97,7 +97,21 @@ export function TurnFiltersBar({
   }, {});
 
   return (
-    <form method="GET" className="card mb-5 p-4">
+    // The key is the filter state, and it is load-bearing.
+    //
+    // Every control here is uncontrolled, set from `defaultValue` — which
+    // React applies when the element MOUNTS and never again. A client-side
+    // navigation ("Clear all", a filter link, Back/Forward) re-renders this
+    // form in the same position, so React reuses the existing DOM nodes and
+    // their values survive a URL change they were supposed to follow. Observed
+    // both ways on 2026-09-23: after Clear all the session select still read
+    // 76557 with no filter in the URL, and after Back it read empty with
+    // `?sessionId=76557` in the URL.
+    //
+    // Keying on the query string remounts the form whenever the filters
+    // change, so every defaultValue is re-applied from the URL — which is
+    // where this component's state is supposed to live in the first place.
+    <form key={filterQuery(filters)} method="GET" className="card mb-5 p-4">
       <SearchHotkey />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">

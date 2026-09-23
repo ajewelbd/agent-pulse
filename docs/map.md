@@ -151,6 +151,14 @@ The active session is pinned into the list even when the project narrowing
 would exclude it. Without that, a `defaultValue` matching no option reverts to
 "All" and the next submit silently drops a filter the user never touched.
 
+**The `key` on the `<form>` is load-bearing — do not remove it.** Every control
+in the bar is uncontrolled and set from `defaultValue`, which React applies
+only when an element mounts. A client-side navigation re-renders the form in
+place, React reuses the DOM nodes, and the controls stop following the URL:
+observed on 2026-09-23 that "Clear all" left the session select reading 76557
+with an empty URL, and Back left it empty with `?sessionId=76557` in the URL.
+Keying on the query string remounts the form whenever the filters change.
+
 ### Showing how a cost was calculated
 
 Every cost on the dashboard carries an info icon that explains it, and what it
