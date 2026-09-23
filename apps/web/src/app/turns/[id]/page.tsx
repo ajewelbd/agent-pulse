@@ -23,11 +23,13 @@ import {
   IconSpend,
   IconTerminal,
 } from '@/components/icons';
+import { CostTip } from '@/components/CostTip';
 import { ideContextPath, parsePrompt } from '@/lib/attachments';
+import { costWorking, sumParts } from '@/lib/cost';
 import { listHref, readFilters } from '@/lib/filters';
 import { compactNum, cost, duration, num, shortId, tailPath, utcClock, utcLong } from '@/lib/format';
 import {
-  getCostBreakdown,
+  getCostInputs,
   getFileChanges,
   getPromptMedia,
   getSessionSummary,
@@ -188,11 +190,11 @@ export default async function TurnDetailPage({
     ),
   ).toString();
 
-  const [calls, changes, breakdown, session, neighbours, rank, filterTotal, media] =
+  const [calls, changes, costInputs, session, neighbours, rank, filterTotal, media] =
     await Promise.all([
       getToolCalls(id),
       getFileChanges(id),
-      getCostBreakdown(id),
+      getCostInputs(id),
       getSessionSummary(turn.session_id),
       getTurnNeighbours(turn.session_id, turn.seq),
       getTurnRank(filters, turn),
@@ -210,6 +212,7 @@ export default async function TurnDetailPage({
     asked.split('\n').find((l) => l.trim() !== '')?.slice(0, 160) ??
     (idePath ? `IDE context · ${tailPath(idePath, 2)}` : '(no prompt text recorded)');
   const attachmentCount = attachments.length + media.length;
+  const working = costWorking(costInputs);
 
   // Only a session with every turn priced can give an honest share; otherwise
   // the denominator is missing turns and every percentage from it is inflated.
@@ -421,6 +424,14 @@ export default async function TurnDetailPage({
           <Card className="p-4">
             <div className="eyebrow flex items-center gap-1.5">
               <IconSpend className="h-3.5 w-3.5" /> Estimated cost
+              <span className="ml-auto">
+                <CostTip
+                  row={costInputs}
+                  storedCostUsd={turn.cost_usd}
+                  costSource={turn.cost_source}
+                  width={330}
+                />
+              </span>
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-2">
               <span className="mono text-3xl leading-none font-semibold tracking-tight">
@@ -431,13 +442,20 @@ export default async function TurnDetailPage({
               )}
             </div>
 
-            {breakdown ? (
+            {working ? (
+              // Both the bar and the info panel read from the same
+              // `costWorking()` result, so the legend can never disagree with
+              // the arithmetic behind the icon.
               <CostBar
                 parts={[
-                  { label: 'Input', usd: Number(breakdown.input_usd), color: 'var(--accent)' },
-                  { label: 'Cache read', usd: Number(breakdown.cache_read_usd), color: 'color-mix(in oklab, var(--accent) 45%, var(--surface-3))' },
-                  { label: 'Cache write', usd: Number(breakdown.cache_write_usd), color: 'color-mix(in oklab, var(--out) 55%, var(--surface-3))' },
-                  { label: 'Output', usd: Number(breakdown.output_usd), color: 'var(--out)' },
+                  { label: 'Input', usd: sumParts(working, ['input']), color: 'var(--accent)' },
+                  { label: 'Cache read', usd: sumParts(working, ['cache_read']), color: 'color-mix(in oklab, var(--accent) 45%, var(--surface-3))' },
+                  {
+                    label: 'Cache write',
+                    usd: sumParts(working, ['cache_write_5m', 'cache_write_1h', 'cache_write_unsplit']),
+                    color: 'color-mix(in oklab, var(--out) 55%, var(--surface-3))',
+                  },
+                  { label: 'Output', usd: sumParts(working, ['output']), color: 'var(--out)' },
                 ]}
               />
             ) : (

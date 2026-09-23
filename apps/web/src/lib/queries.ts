@@ -52,6 +52,24 @@ export interface TurnListRow extends Record<string, unknown> {
   output_tokens: string | null;
   cost_usd: string | null;
   cost_source: string;
+  /**
+   * The per-token counts and the rates this row was priced at, so the cost
+   * cell can show its own working. Every one is NULL on an unpriced turn.
+   */
+  input_tokens: string | null;
+  cache_read_tokens: string | null;
+  cache_write_tokens: string | null;
+  cache_write_5m_tokens: string | null;
+  cache_write_1h_tokens: string | null;
+  input_usd_per_mtok: string | null;
+  output_usd_per_mtok: string | null;
+  cache_read_usd_per_mtok: string | null;
+  cache_write_5m_usd_per_mtok: string | null;
+  cache_write_1h_usd_per_mtok: string | null;
+  rate_source: string | null;
+  effective_from: Date | null;
+  effective_to: Date | null;
+  rate_model: string | null;
   prompt_preview: string | null;
   /**
    * Which editor block the turn carried, stripped from the preview:
@@ -137,6 +155,16 @@ export async function listTurns(
             t.started_at, t.ended_at, t.duration_ms, t.status,
             t.token_source, t.total_input_tokens, t.output_tokens,
             t.cost_usd, t.cost_source,
+            -- The working behind the cost cell. Joining model_pricing on the
+            -- turn's own pricing_id is a primary-key lookup into a 9-row
+            -- table: the whole list query plans at 0.4 ms with it
+            -- (EXPLAIN ANALYZE, 2026-09-23). Nothing here is TOASTed.
+            t.input_tokens, t.cache_read_tokens, t.cache_write_tokens,
+            t.cache_write_5m_tokens, t.cache_write_1h_tokens,
+            mp.input_usd_per_mtok, mp.output_usd_per_mtok, mp.cache_read_usd_per_mtok,
+            mp.cache_write_5m_usd_per_mtok, mp.cache_write_1h_usd_per_mtok,
+            mp.source AS rate_source, mp.effective_from, mp.effective_to,
+            mp.model_normalized AS rate_model,
             -- Claude Code prefixes a turn with an editor block when the file
             -- in focus or the selection changed. Verified on 2026-09-22: those
             -- are the only two leading tags in this archive (154 + 53 of 466),
@@ -167,6 +195,7 @@ export async function listTurns(
        JOIN agents a   ON a.id = t.agent_id
        JOIN sessions s ON s.id = t.session_id
        LEFT JOIN providers pr ON pr.id = t.provider_id
+       LEFT JOIN model_pricing mp ON mp.id = t.pricing_id
        ${where}
       ORDER BY t.started_at ${dir}, t.id ${dir}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -405,36 +434,56 @@ export function getPromptMediaBlock(turnId: string, idx: number): Promise<Prompt
   );
 }
 
-export interface CostBreakdownRow extends Record<string, unknown> {
-  input_usd: string;
-  cache_read_usd: string;
-  cache_write_usd: string;
-  output_usd: string;
+export interface CostInputsRow extends Record<string, unknown> {
+  input_tokens: string | null;
+  output_tokens: string | null;
+  cache_read_tokens: string | null;
+  cache_write_tokens: string | null;
+  cache_write_5m_tokens: string | null;
+  cache_write_1h_tokens: string | null;
+  input_usd_per_mtok: string | null;
+  output_usd_per_mtok: string | null;
+  cache_read_usd_per_mtok: string | null;
+  cache_write_5m_usd_per_mtok: string | null;
+  cache_write_1h_usd_per_mtok: string | null;
+  effective_from: Date;
+  effective_to: Date | null;
+  rate_source: string;
+  rate_model: string;
+  rate_provider: string;
 }
 
 /**
- * What the turn's cost is made of.
+ * The inputs to a turn's cost: its token counts and the rates it was priced at.
  *
- * Recomputed from the SAME `model_pricing` row the turn was priced against
- * (`turns.pricing_id`), not from today's rate — a price change inserts a new
- * row, it does not rewrite what past turns cost, and this must not undo that.
- * Verified on 2026-09-22 that the four components sum exactly to `cost_usd`.
+ * The arithmetic itself is NOT done here. It lives in lib/cost.ts, in JS
+ * floats, because that is what the collector ran — `cost_usd` is
+ * `total.toFixed(8)` of a float sum, so reproducing it in SQL numeric would
+ * disagree in the last places and make the displayed working look wrong when
+ * it was right.
  *
- * Returns null for an unpriced turn. There is no breakdown of a cost that was
- * never computed, and a row of zeroes would read as "cost nothing".
+ * The rate comes from the SAME `model_pricing` row the turn was priced against
+ * (`turns.pricing_id`), never from today's rate. A price change inserts a new
+ * pricing row; it does not rewrite what past turns cost, and a breakdown
+ * computed at today's rate would silently undo that.
+ *
+ * Returns null for an unpriced turn — the join to `model_pricing` finds
+ * nothing. There is no working to show for a sum that was never computed, and
+ * a table of zeroes would read as "this turn cost nothing".
  */
-export function getCostBreakdown(turnId: string): Promise<CostBreakdownRow | null> {
-  return queryOne<CostBreakdownRow>(
-    `SELECT coalesce(t.input_tokens,0)/1e6 * mp.input_usd_per_mtok AS input_usd,
-            coalesce(t.cache_read_tokens,0)/1e6
-              * coalesce(mp.cache_read_usd_per_mtok, mp.input_usd_per_mtok)      AS cache_read_usd,
-            coalesce(t.cache_write_5m_tokens,0)/1e6
-              * coalesce(mp.cache_write_5m_usd_per_mtok, mp.input_usd_per_mtok)
-            + coalesce(t.cache_write_1h_tokens,0)/1e6
-              * coalesce(mp.cache_write_1h_usd_per_mtok, mp.input_usd_per_mtok)  AS cache_write_usd,
-            coalesce(t.output_tokens,0)/1e6 * mp.output_usd_per_mtok             AS output_usd
+export function getCostInputs(turnId: string): Promise<CostInputsRow | null> {
+  return queryOne<CostInputsRow>(
+    `SELECT t.input_tokens, t.output_tokens, t.cache_read_tokens, t.cache_write_tokens,
+            t.cache_write_5m_tokens, t.cache_write_1h_tokens,
+            mp.input_usd_per_mtok, mp.output_usd_per_mtok, mp.cache_read_usd_per_mtok,
+            mp.cache_write_5m_usd_per_mtok, mp.cache_write_1h_usd_per_mtok,
+            mp.effective_from, mp.effective_to,
+            mp.source           AS rate_source,
+            mp.model_normalized AS rate_model,
+            prp.key             AS rate_provider
        FROM turns t
        JOIN model_pricing mp ON mp.id = t.pricing_id
+       JOIN providers prp     ON prp.id = mp.provider_id
       WHERE t.id = $1::bigint`,
     [turnId],
   );

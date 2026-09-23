@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { TurnFiltersBar } from '@/components/TurnFilters';
 import { CostChip, ProviderChip, StatusDot } from '@/components/Chips';
+import { CostTip } from '@/components/CostTip';
 import { HealthBanner } from '@/components/HealthBanner';
 import { Pagination } from '@/components/Pagination';
 import { StatTiles } from '@/components/StatTiles';
@@ -199,7 +200,17 @@ export default async function TurnListPage({
                       </td>
 
                       <td className="px-3 py-3 text-right whitespace-nowrap">
-                        <div className="mono text-xs font-medium">{cost(t.cost_usd, t.cost_source)}</div>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="mono text-xs font-medium">{cost(t.cost_usd, t.cost_source)}</span>
+                          {/* The pricing row is looked up by the turn's own
+                              provider_id, so the row's provider IS the rate's
+                              provider — no second join for a name we have. */}
+                          <CostTip
+                            row={{ ...t, rate_provider: t.provider_key }}
+                            storedCostUsd={t.cost_usd}
+                            costSource={t.cost_source}
+                          />
+                        </div>
                         {/* Relative to the most expensive turn on this page — a
                             shape cue for scanning, not a scale to read off. */}
                         <div className="mt-1.5 ml-auto h-0.5 w-14 rounded-full bg-line">

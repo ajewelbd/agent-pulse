@@ -14,5 +14,10 @@
     "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["src/lib/attachments.ts", "src/lib/attachments.test.ts"]
+  "include": [
+    "src/lib/attachments.ts",
+    "src/lib/attachments.test.ts",
+    "src/lib/cost.ts",
+    "src/lib/cost.test.ts"
+  ]
 }

@@ -110,6 +110,8 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/lib/format.ts` | Display rules, all enforcing "absence is not zero" |
 | `src/lib/attachments.ts` | Recovers what the user attached to a prompt from the stored text |
 | `src/lib/attachments.test.ts` | Parser regression cases, every fixture a real stored prompt |
+| `src/lib/cost.ts` | Reconstructs the arithmetic behind a turn's cost, and checks it against the stored value |
+| `src/lib/cost.test.ts` | Cost-working cases, fixtures taken from real stored turns |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
 | `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
 | `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
@@ -122,8 +124,39 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/components/DiffView.tsx` | Diff-syntax rendering, collapsed by default |
 | `src/components/PromptAttachments.tsx` | The rail beside the prompt: screenshots, selection, open file, mentions |
 | `src/components/ImagePreview.tsx` | Screenshot thumbnail + full-size preview overlay |
+| `src/components/InfoTip.tsx` | The info icon and its panel — portalled, so tables cannot clip it |
+| `src/components/CostTip.tsx` | One turn's cost, line by line, on an info icon |
 | `src/components/HealthBanner.tsx` | States where the numbers are incomplete, and what to do about each |
 | `src/components/Chips.tsx` | Provenance chips — every one exists to make a *known unknown* visible |
+
+### Showing how a cost was calculated
+
+Every cost on the dashboard carries an info icon that explains it, and what it
+explains differs by scope:
+
+| Where | What the panel shows |
+|---|---|
+| a turn's cost (list row, detail card) | every line of `tokens × rate`, the total, and the rate row it used |
+| Spend tile | how many turns on the page were priced, how many were not |
+| aggregates cost column / total | that it is `sum(cost_usd)`, and that unpriced turns add nothing |
+
+The per-turn working is computed in `lib/cost.ts`, **not** in SQL. It is a
+deliberate second implementation of the collector's `computeCost()`
+(`apps/collector/src/ingest.ts`) and has to stay a mirror of it — a NULL rate
+contributes 0 rather than falling back to the input rate, and unbucketed cache
+writes are billed at the 5m rate. It is in JS floats because `cost_usd` is
+`total.toFixed(8)` of a float sum; in SQL numeric the last places would
+disagree and the displayed working would look wrong when it was right.
+
+`reconcile()` compares the reconstruction to the stored value and the panel
+says so when they differ, rather than showing arithmetic that does not add up.
+Checked against every priced turn in this archive on 2026-09-23: 457 of 457
+reconcile, largest absolute difference 1.4e-14 against a 1e-8 tolerance.
+
+This replaced a SQL `getCostBreakdown()` that coalesced a NULL cache-read rate
+to the input rate. No pricing row in this database has a NULL rate, so it was
+correct here and wrong in principle — the collector charges nothing for a rate
+it does not have.
 
 ### Prompt attachments
 
@@ -175,6 +208,7 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 | add or fix a redaction pattern | `packages/schema/src/redaction.ts` — **and bump `version`** |
 | change what the dashboard queries | `apps/web/src/lib/queries.ts`, nowhere else |
 | change how prompt attachments are recognised | `apps/web/src/lib/attachments.ts` — **and add a case to its test** |
+| change how a cost is explained on screen | `apps/web/src/lib/cost.ts` — **and keep it a mirror of `ingest.ts` → `computeCost()`** |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |
 | understand why a turn has no provider | `reconciler.ts` → `applyProviderAttribution()` |

@@ -1,4 +1,5 @@
 import { compactNum, cost } from '@/lib/format';
+import { InfoTip, TipNote, TipTitle } from './InfoTip';
 import { IconFile, IconIn, IconOut, IconSpend, IconTerminal } from './icons';
 import type { TurnListRow } from '@/lib/queries';
 
@@ -19,6 +20,7 @@ function Tile({
   sub,
   tone,
   title,
+  info,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -26,6 +28,7 @@ function Tile({
   sub: React.ReactNode;
   tone?: 'accent' | 'out';
   title?: string;
+  info?: React.ReactNode;
 }) {
   const valueTone =
     tone === 'accent' ? 'text-accent' : tone === 'out' ? 'text-out' : 'text-ink';
@@ -34,6 +37,7 @@ function Tile({
       <div className="flex items-center gap-1.5">
         <span className="text-ink-3">{icon}</span>
         <span className="eyebrow">{label}</span>
+        {info && <span className="ml-auto">{info}</span>}
       </div>
       <div className={`mono mt-2 text-2xl leading-none font-semibold tracking-tight ${valueTone}`}>
         {value}
@@ -71,6 +75,7 @@ export function StatTiles({ rows }: { rows: TurnListRow[] }) {
 
   const allTokens = tokensIn + tokensOut;
   const outShare = allTokens > 0 ? (tokensOut / allTokens) * 100 : null;
+  const priced = turns - unpriced;
 
   return (
     <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -80,6 +85,29 @@ export function StatTiles({ rows }: { rows: TurnListRow[] }) {
         value={cost(String(spend))}
         tone="accent"
         title="List-price estimate over the turns on this page only."
+        info={
+          <InfoTip label="How this spend figure was calculated" width={300}>
+            <TipTitle>How this spend figure was calculated</TipTitle>
+            <p className="text-[11px] leading-relaxed text-ink-2">
+              The stored <span className="mono">cost_usd</span> of the{' '}
+              <span className="mono text-ink">{priced}</span> priced turn
+              {priced === 1 ? '' : 's'} on this page, added together. Each of those was priced at
+              ingest from its own token counts and the rate then in force — the info icon on any
+              row&apos;s cost shows that row&apos;s working.
+            </p>
+            {unpriced > 0 && (
+              <p className="mt-2 text-[11px] leading-relaxed text-warn">
+                <span className="mono">{unpriced}</span> turn{unpriced === 1 ? ' has' : 's have'}{' '}
+                no rate and contribute nothing. This total is therefore a floor, not the full
+                spend.
+              </p>
+            )}
+            <TipNote>
+              This page only — not the whole filter, and not the whole archive. Change the page
+              and this number changes.
+            </TipNote>
+          </InfoTip>
+        }
         sub={
           unpriced > 0 ? (
             <>
