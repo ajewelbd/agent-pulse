@@ -6,6 +6,7 @@ import { Collapsible } from '@/components/Collapsible';
 import { CommandTimeline } from '@/components/CommandTimeline';
 import { CopyButton } from '@/components/CopyButton';
 import { FileChangeList } from '@/components/DiffView';
+import { PromptAttachments } from '@/components/PromptAttachments';
 import { ProviderChip, StatusChip, TokenSourceChip } from '@/components/Chips';
 import {
   IconAgent,
@@ -18,14 +19,20 @@ import {
   IconFile,
   IconFolder,
   IconLayers,
+  IconPaperclip,
   IconSpend,
   IconTerminal,
 } from '@/components/icons';
+import { CostTip } from '@/components/CostTip';
+import { TokenTip } from '@/components/TokenTip';
+import { ideContextPath, parsePrompt } from '@/lib/attachments';
+import { costWorking, sumParts } from '@/lib/cost';
 import { listHref, readFilters } from '@/lib/filters';
-import { compactNum, cost, duration, ideContext, num, shortId, tailPath, utcClock, utcLong } from '@/lib/format';
+import { compactNum, cost, duration, num, shortId, tailPath, tokenCount, utcClock, utcLong } from '@/lib/format';
 import {
-  getCostBreakdown,
+  getCostInputs,
   getFileChanges,
+  getPromptMedia,
   getSessionSummary,
   getToolCalls,
   getTurn,
@@ -41,8 +48,20 @@ export const dynamic = 'force-dynamic';
 
 const CARD_HEAD = 'flex items-center gap-2 border-b border-line px-4 py-3';
 
-function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <section className={`card ${className}`}>{children}</section>;
+function Card({
+  children,
+  className = '',
+  id,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  id?: string;
+}) {
+  return (
+    <section id={id} className={`card ${className}`}>
+      {children}
+    </section>
+  );
 }
 
 function RailRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -172,24 +191,29 @@ export default async function TurnDetailPage({
     ),
   ).toString();
 
-  const [calls, changes, breakdown, session, neighbours, rank, filterTotal] = await Promise.all([
-    getToolCalls(id),
-    getFileChanges(id),
-    getCostBreakdown(id),
-    getSessionSummary(turn.session_id),
-    getTurnNeighbours(turn.session_id, turn.seq),
-    getTurnRank(filters, turn),
-    countTurns(filters),
-  ]);
+  const [calls, changes, costInputs, session, neighbours, rank, filterTotal, media] =
+    await Promise.all([
+      getToolCalls(id),
+      getFileChanges(id),
+      getCostInputs(id),
+      getSessionSummary(turn.session_id),
+      getTurnNeighbours(turn.session_id, turn.seq),
+      getTurnRank(filters, turn),
+      countTurns(filters),
+      getPromptMedia(id),
+    ]);
 
   // The editor-focus block is a prefix the user never typed; the heading is
-  // what they did type. The block itself is still shown verbatim in the prompt
-  // card below, because it was part of what the model read.
-  const ide = ideContext(turn.prompt_text);
-  const asked = (ide ? ide.rest : turn.prompt_text)?.trim();
+  // what they did type. Nothing is hidden by splitting it off — the block's
+  // file, line range and selected text all render as attachments beside the
+  // prompt, and Copy still yields the raw text the model was given.
+  const { body: asked, attachments } = parsePrompt(turn.prompt_text);
+  const idePath = ideContextPath(attachments);
   const title =
-    asked?.split('\n').find((l) => l.trim() !== '')?.slice(0, 160) ??
-    (ide?.path ? `IDE context · ${tailPath(ide.path, 2)}` : '(no prompt text recorded)');
+    asked.split('\n').find((l) => l.trim() !== '')?.slice(0, 160) ??
+    (idePath ? `IDE context · ${tailPath(idePath, 2)}` : '(no prompt text recorded)');
+  const attachmentCount = attachments.length + media.length;
+  const working = costWorking(costInputs);
 
   // Only a session with every turn priced can give an honest share; otherwise
   // the denominator is missing turns and every percentage from it is inflated.
@@ -229,13 +253,15 @@ export default async function TurnDetailPage({
         <div className="flex flex-wrap items-center gap-3">
           <StatusChip status={turn.status} />
           <span className="mono text-xs text-ink-2">{utcLong(turn.started_at)}</span>
-          {ide && (
-            <span
-              title={`The editor sent ${ide.path ?? 'its open file'} with this prompt.`}
-              className="mono rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
+          {attachmentCount > 0 && (
+            <a
+              href="#prompt"
+              title="Screenshots, editor context and files that were sent with this prompt."
+              className="mono flex items-center gap-1 rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3 hover:text-ink"
             >
-              ide context
-            </span>
+              <IconPaperclip className="h-3 w-3" />
+              {attachmentCount} attached
+            </a>
           )}
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -278,19 +304,32 @@ export default async function TurnDetailPage({
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-5">
-          <Card>
+          <Card className="scroll-mt-20" id="prompt">
             <div className={CARD_HEAD}>
               <h2 className="text-sm font-semibold">Prompt</h2>
               {turn.prompt_text && (
                 <div className="ml-auto">
-                  <CopyButton value={turn.prompt_text} />
+                  {/* The RAW text, editor block included — what the model was
+                      given, not the reading view. */}
+                  <CopyButton value={turn.prompt_text} label="Copy raw" />
                 </div>
               )}
             </div>
-            <div className="p-4">
+            {/* Attachments sit beside the prompt on a wide screen and stack
+                under it on a narrow one. */}
+            <div
+              className={`grid items-start gap-4 p-4 ${
+                attachmentCount > 0 ? 'lg:grid-cols-[minmax(0,1fr)_280px]' : ''
+              }`}
+            >
               <pre className="mono overflow-x-auto rounded-lg border border-line bg-surface-2 p-3 text-[13px] leading-relaxed whitespace-pre-wrap">
-                {turn.prompt_text ?? '(no prompt text recorded)'}
+                {turn.prompt_text === null
+                  ? '(no prompt text recorded)'
+                  : asked === ''
+                    ? '(the editor context was the whole prompt — nothing was typed)'
+                    : asked}
               </pre>
+              <PromptAttachments turnId={turn.id} attachments={attachments} media={media} />
             </div>
           </Card>
 
@@ -298,7 +337,8 @@ export default async function TurnDetailPage({
             <div className={CARD_HEAD}>
               <h2 className="text-sm font-semibold">Response</h2>
               <span className="mono ml-auto flex items-center gap-2 text-xs text-ink-2">
-                {compactNum(turn.output_tokens)} tokens
+                {tokenCount(turn.output_tokens, turn.token_source)} tokens
+                <TokenTip row={turn} focus="out" width={300} />
                 <TokenSourceChip source={turn.token_source} />
               </span>
             </div>
@@ -386,6 +426,14 @@ export default async function TurnDetailPage({
           <Card className="p-4">
             <div className="eyebrow flex items-center gap-1.5">
               <IconSpend className="h-3.5 w-3.5" /> Estimated cost
+              <span className="ml-auto">
+                <CostTip
+                  row={costInputs}
+                  storedCostUsd={turn.cost_usd}
+                  costSource={turn.cost_source}
+                  width={330}
+                />
+              </span>
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-2">
               <span className="mono text-3xl leading-none font-semibold tracking-tight">
@@ -396,13 +444,20 @@ export default async function TurnDetailPage({
               )}
             </div>
 
-            {breakdown ? (
+            {working ? (
+              // Both the bar and the info panel read from the same
+              // `costWorking()` result, so the legend can never disagree with
+              // the arithmetic behind the icon.
               <CostBar
                 parts={[
-                  { label: 'Input', usd: Number(breakdown.input_usd), color: 'var(--accent)' },
-                  { label: 'Cache read', usd: Number(breakdown.cache_read_usd), color: 'color-mix(in oklab, var(--accent) 45%, var(--surface-3))' },
-                  { label: 'Cache write', usd: Number(breakdown.cache_write_usd), color: 'color-mix(in oklab, var(--out) 55%, var(--surface-3))' },
-                  { label: 'Output', usd: Number(breakdown.output_usd), color: 'var(--out)' },
+                  { label: 'Input', usd: sumParts(working, ['input']), color: 'var(--accent)' },
+                  { label: 'Cache read', usd: sumParts(working, ['cache_read']), color: 'color-mix(in oklab, var(--accent) 45%, var(--surface-3))' },
+                  {
+                    label: 'Cache write',
+                    usd: sumParts(working, ['cache_write_5m', 'cache_write_1h', 'cache_write_unsplit']),
+                    color: 'color-mix(in oklab, var(--out) 55%, var(--surface-3))',
+                  },
+                  { label: 'Output', usd: sumParts(working, ['output']), color: 'var(--out)' },
                 ]}
               />
             ) : (
@@ -421,15 +476,28 @@ export default async function TurnDetailPage({
           <Card className="p-4">
             <div className="eyebrow flex items-center gap-1.5">
               <IconLayers className="h-3.5 w-3.5" /> Tokens
+              <span className="ml-auto">
+                <TokenTip row={turn} focus="in" width={310} />
+              </span>
             </div>
             <div className="mt-2 flex items-end gap-5">
               <div>
-                <div className="mono text-2xl leading-none font-semibold">{compactNum(turn.total_input_tokens)}</div>
+                {/* tokenCount, not compactNum: total_input_tokens is generated
+                    with coalesce(…,0), so a turn that reported no usage would
+                    otherwise claim it used none. */}
+                <div className="mono text-2xl leading-none font-semibold">
+                  {tokenCount(turn.total_input_tokens, turn.token_source)}
+                </div>
                 <div className="mt-1 text-[11px] text-ink-2">in</div>
               </div>
               <div>
-                <div className="mono text-2xl leading-none font-semibold text-out">{compactNum(turn.output_tokens)}</div>
-                <div className="mt-1 text-[11px] text-ink-2">out</div>
+                <div className="mono text-2xl leading-none font-semibold text-out">
+                  {tokenCount(turn.output_tokens, turn.token_source)}
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-ink-2">
+                  out
+                  <TokenTip row={turn} focus="out" width={300} />
+                </div>
               </div>
               {ratio !== null && (
                 <span

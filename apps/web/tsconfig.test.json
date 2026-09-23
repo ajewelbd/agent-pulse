@@ -1,0 +1,25 @@
+{
+  // The dashboard's own tsconfig is noEmit and JSX-aware, which `node --test`
+  // cannot run. This one emits plain CommonJS for the pure-logic modules only —
+  // nothing listed here may import React, Next or the pool. CommonJS because
+  // apps/web is not `"type": "module"`, and Next's build depends on that.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "outDir": ".test-out",
+    "rootDir": "src/lib",
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": [
+    "src/lib/attachments.ts",
+    "src/lib/attachments.test.ts",
+    "src/lib/cost.ts",
+    "src/lib/cost.test.ts",
+    "src/lib/tokens.ts",
+    "src/lib/tokens.test.ts"
+  ]
+}

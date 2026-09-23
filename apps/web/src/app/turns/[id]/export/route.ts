@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getFileChanges, getToolCalls, getTurn } from '@/lib/queries';
+import { parsePrompt } from '@/lib/attachments';
+import { getFileChanges, getPromptMedia, getToolCalls, getTurn } from '@/lib/queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +28,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'not found' }, { status: 404 });
   }
 
-  const [toolCalls, fileChanges] = await Promise.all([getToolCalls(id), getFileChanges(id)]);
+  const [toolCalls, fileChanges, media] = await Promise.all([
+    getToolCalls(id),
+    getFileChanges(id),
+    getPromptMedia(id),
+  ]);
 
   const body = JSON.stringify(
     {
@@ -36,6 +41,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       turn,
       tool_calls: toolCalls,
       file_changes: fileChanges,
+      // What the user sent with the prompt. The editor context and the
+      // @mentions are derived from `turn.prompt_text`, which is in this file
+      // already; screenshots and documents are not, so each carries the path
+      // that serves its bytes rather than the bytes themselves — a single
+      // attachment in this archive is 4.9 MB, and an export is meant to be
+      // readable.
+      prompt_attachments: parsePrompt(turn.prompt_text).attachments,
+      prompt_media: media.map((m) => ({ ...m, href: `/turns/${id}/attachment/${m.idx}` })),
     },
     null,
     2,

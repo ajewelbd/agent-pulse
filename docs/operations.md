@@ -233,8 +233,8 @@ underlying commands directly — `make help` shows what each target does, and
 
 ## Known gaps in the tooling itself
 
-- `make test` runs the collector's tests only. The proxy's `usage.test.ts` is
-  not in that target; run it with
+- `make test` runs the collector's and the dashboard's tests. The proxy's
+  `usage.test.ts` is still not in that target; run it with
   `pnpm --filter @aiuo/proxy run test`.
 - Restore has never been exercised.
 - There is no automated check that seeded prices still match the provider's

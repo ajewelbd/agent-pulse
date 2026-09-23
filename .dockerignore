@@ -10,6 +10,7 @@ node_modules
 # built against the wrong platform.
 **/dist
 **/.next
+**/.test-out
 **/*.tsbuildinfo
 
 .git

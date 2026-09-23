@@ -24,6 +24,26 @@ export function compactNum(value: string | number | null | undefined): string {
   return n.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 }
 
+/**
+ * A token count, respecting `token_source`.
+ *
+ * `turns.total_input_tokens` is generated with `coalesce(…, 0)`, so a turn
+ * whose usage was never reported has 0 there rather than NULL — and `num()`
+ * cannot tell that apart from a genuine zero. Before this existed, all 16
+ * unreported turns in this archive rendered "0 in", which is exactly the claim
+ * the schema's CHECK constraints exist to prevent. `token_source = 'unknown'`
+ * is the flag that distinguishes them; it is set by the adapter only when no
+ * assistant record in the turn carried usage at all.
+ */
+export function tokenCount(
+  value: string | number | null | undefined,
+  source: string | null | undefined,
+  compact = true,
+): string {
+  if (source === 'unknown') return '—';
+  return compact ? compactNum(value) : num(value);
+}
+
 export function cost(value: string | null | undefined, source?: string): string {
   if (source === 'free_local') return 'free (local)';
   if (value === null || value === undefined) return 'not priced';
@@ -96,34 +116,6 @@ export function utcLong(value: Date | string | null | undefined): string {
   const d = asDate(value);
   if (!d) return '—';
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} · ${utcClock(d)} UTC`;
-}
-
-/**
- * Claude Code prefixes a turn with an editor block when the file in focus or
- * the selection changed. It is boilerplate the user never typed, and it is long
- * enough to hide the actual request behind it.
- *
- * Verified against the prompt_text actually stored (2026-09-22): these are the
- * only two leading tags in this archive, each is closed, and every one of the
- * 207 carries the real request after it — so this splits rather than replaces.
- * `rest` is what the user wrote; `path` is null when the block named no file.
- */
-export function ideContext(
-  prompt: string | null | undefined,
-): { kind: string; path: string | null; rest: string } | null {
-  if (!prompt) return null;
-  const match = /^<(ide_opened_file|ide_selection)>([\s\S]*?)<\/\1>/.exec(prompt);
-  if (!match) return null;
-  // Two phrasings, verified against stored prompts: "opened the file X in the
-  // IDE." and "selected the lines N to M from X:". Paths contain spaces on this
-  // machine ("/Volumes/Macintosh HD 1/…"), so both captures are non-greedy up
-  // to their own terminator rather than to whitespace.
-  const body = match[2]!;
-  const path =
-    /opened the file (.+?) in the IDE\./.exec(body)?.[1] ??
-    /from (.+?):\s/.exec(body)?.[1] ??
-    null;
-  return { kind: match[1]!, path, rest: prompt.slice(match[0].length).trim() };
 }
 
 /** Last `keep` path segments, ellipsised at the front — the tail is what identifies a file. */

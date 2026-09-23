@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { TurnFiltersBar } from '@/components/TurnFilters';
 import { CostChip, ProviderChip, StatusDot } from '@/components/Chips';
+import { CostTip } from '@/components/CostTip';
+import { TokenTip } from '@/components/TokenTip';
 import { HealthBanner } from '@/components/HealthBanner';
 import { Pagination } from '@/components/Pagination';
 import { StatTiles } from '@/components/StatTiles';
 import { IconChevronDown, IconFile, IconTerminal, IconWarning } from '@/components/icons';
 import { readFilters, sortToggleHref, turnHref } from '@/lib/filters';
-import { compactNum, cost, duration, shortId, utcClock, utcDay } from '@/lib/format';
+import { cost, duration, shortId, tokenCount, utcClock, utcDay } from '@/lib/format';
 import {
   PAGE_SIZE,
   countTurns,
@@ -30,18 +32,34 @@ const TH = 'px-3 py-2.5 text-left font-medium';
  * The editor-focus block is already stripped in SQL, so what lands here is what
  * the user actually typed. The badge is kept because that block was part of the
  * turn — it is context the model was paid to read, and a row that hides it
- * entirely would understate why the turn cost what it did.
+ * entirely would understate why the turn cost what it did. Which block it was
+ * matters too: a selection is a deliberate act, an open file is not.
+ *
+ * Screenshots are not flagged here — see the note in listTurns(). The turn
+ * detail page shows them, with previews.
  */
+const IDE_BADGE: Record<string, { label: string; title: string }> = {
+  ide_selection: {
+    label: 'selection',
+    title: 'The user had lines selected in the editor; they were sent with this prompt.',
+  },
+  ide_opened_file: {
+    label: 'ide context',
+    title: 'This turn was also given the file open in the editor at the time.',
+  },
+};
+
 function PromptCell({ turn }: { turn: TurnListRow }) {
   const text = turn.prompt_preview?.trim();
+  const badge = turn.ide_kind ? IDE_BADGE[turn.ide_kind] : undefined;
   return (
     <span className="flex items-baseline gap-2">
-      {turn.had_ide_context && (
+      {badge && (
         <span
-          title="This turn was also given the file open in the editor at the time."
+          title={badge.title}
           className="mono shrink-0 rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-3"
         >
-          ide context
+          {badge.label}
         </span>
       )}
       {text ? (
@@ -175,15 +193,38 @@ export default async function TurnListPage({
                         </div>
                       </td>
 
-                      <td className="mono px-3 py-3 text-right text-xs whitespace-nowrap">
-                        {compactNum(t.total_input_tokens)}
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* tokenCount, not compactNum: total_input_tokens is
+                              generated with coalesce(…,0), so an unreported
+                              turn arrives here as a real 0. */}
+                          <span className="mono text-xs">
+                            {tokenCount(t.total_input_tokens, t.token_source)}
+                          </span>
+                          <TokenTip row={t} focus="in" />
+                        </div>
                       </td>
-                      <td className="mono px-3 py-3 text-right text-xs whitespace-nowrap">
-                        {compactNum(t.output_tokens)}
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="mono text-xs">
+                            {tokenCount(t.output_tokens, t.token_source)}
+                          </span>
+                          <TokenTip row={t} focus="out" />
+                        </div>
                       </td>
 
                       <td className="px-3 py-3 text-right whitespace-nowrap">
-                        <div className="mono text-xs font-medium">{cost(t.cost_usd, t.cost_source)}</div>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="mono text-xs font-medium">{cost(t.cost_usd, t.cost_source)}</span>
+                          {/* The pricing row is looked up by the turn's own
+                              provider_id, so the row's provider IS the rate's
+                              provider — no second join for a name we have. */}
+                          <CostTip
+                            row={{ ...t, rate_provider: t.provider_key }}
+                            storedCostUsd={t.cost_usd}
+                            costSource={t.cost_source}
+                          />
+                        </div>
                         {/* Relative to the most expensive turn on this page — a
                             shape cue for scanning, not a scale to read off. */}
                         <div className="mt-1.5 ml-auto h-0.5 w-14 rounded-full bg-line">

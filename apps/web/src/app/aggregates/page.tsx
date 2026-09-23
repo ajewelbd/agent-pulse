@@ -1,6 +1,7 @@
 import { compactNum, cost, num } from '@/lib/format';
 import { readFilters } from '@/lib/filters';
 import { HealthBanner } from '@/components/HealthBanner';
+import { InfoTip, TipNote, TipTitle } from '@/components/InfoTip';
 import { Chip } from '@/components/Chips';
 import {
   aggregateBy,
@@ -21,7 +22,89 @@ function Bar({ value, max }: { value: number; max: number }) {
   );
 }
 
-function AggregateTable({ title, rows, note }: { title: string; rows: AggregateRow[]; note?: string }) {
+/**
+ * What a cost column in a rollup actually is.
+ *
+ * Every row in a table is computed the same way, so this sits on the column
+ * header rather than on each row — the per-row specific, how many of its turns
+ * had no rate, is already in the Turns cell beside it.
+ */
+function GroupCostTip({ grouping }: { grouping: string }) {
+  return (
+    <InfoTip label="How these costs were calculated" width={300}>
+      <TipTitle>How these costs were calculated</TipTitle>
+      <p className="text-[11px] leading-relaxed text-ink-2">
+        <span className="mono">sum(cost_usd)</span> over the turns in each {grouping}. Nothing is
+        recomputed here: each turn was priced once at ingest, from its own token counts and the
+        rate in force when it ran. Open any turn to see that turn&apos;s working.
+      </p>
+      <p className="mt-2 text-[11px] leading-relaxed text-ink-2">
+        Turns with no rate are counted in <strong>Turns</strong> but contribute nothing to{' '}
+        <strong>Cost</strong>, so any row flagged <span className="text-warn">unpriced</span> shows
+        a floor rather than its real spend.
+      </p>
+      <TipNote>
+        List price, from seeded rates. Batch discounts and contract rates are not modelled, and
+        none of it has been checked against an invoice.
+      </TipNote>
+    </InfoTip>
+  );
+}
+
+/**
+ * What a token column in a rollup contains.
+ *
+ * Input is the column that misleads if left unexplained: it is the *billable*
+ * figure, and on agent traffic it is overwhelmingly cache reads, which cost a
+ * tenth of fresh input. A reader who takes it for uncached input will conclude
+ * the spend is impossible.
+ */
+function TokenColumnTip({ focus, grouping }: { focus: 'in' | 'out'; grouping: string }) {
+  const label = focus === 'in' ? 'What this input column counts' : 'What this output column counts';
+  return (
+    <InfoTip label={label} width={300}>
+      <TipTitle>{label}</TipTitle>
+      {focus === 'in' ? (
+        <>
+          <p className="text-[11px] leading-relaxed text-ink-2">
+            <span className="mono">sum(total_input_tokens)</span> over the turns in each {grouping}
+            , where each turn&apos;s total is{' '}
+            <span className="mono">
+              input + cache&nbsp;read + cache&nbsp;write
+            </span>{' '}
+            — everything the provider charged for on the way in, not uncached input alone.
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-2">
+            Cache reads usually dominate it, and they are the cheapest class, so a large number
+            here does not imply a large bill. Open any turn to see that turn&apos;s split.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-ink-2">
+          <span className="mono">sum(output_tokens)</span> over the turns in each {grouping} —
+          everything the models generated, prose and tool calls alike. It has no sub-parts, and it
+          is the priciest class: 5× uncached input on every rate seeded here.
+        </p>
+      )}
+      <TipNote>
+        A turn whose usage was never reported has no counts at all and adds nothing to either
+        column, though it is still counted under <strong>Turns</strong>.
+      </TipNote>
+    </InfoTip>
+  );
+}
+
+function AggregateTable({
+  title,
+  rows,
+  note,
+  grouping,
+}: {
+  title: string;
+  rows: AggregateRow[];
+  note?: string;
+  grouping: string;
+}) {
   const maxCost = Math.max(0, ...rows.map((r) => Number(r.cost_usd ?? 0)));
 
   return (
@@ -39,9 +122,24 @@ function AggregateTable({ title, rows, note }: { title: string; rows: AggregateR
               <tr className="border-b border-line">
                 <th className="px-3 py-1.5 font-medium">&nbsp;</th>
                 <th className="px-3 py-1.5 text-right font-medium">Turns</th>
-                <th className="px-3 py-1.5 text-right font-medium">Input</th>
-                <th className="px-3 py-1.5 text-right font-medium">Output</th>
-                <th className="px-3 py-1.5 text-right font-medium">Cost</th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Input
+                    <TokenColumnTip focus="in" grouping={grouping} />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Output
+                    <TokenColumnTip focus="out" grouping={grouping} />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Cost
+                    <GroupCostTip grouping={grouping} />
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -103,9 +201,33 @@ export default async function AggregatesPage({
       <HealthBanner health={health} />
 
       <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 card px-4 py-3">
-        <div>
+        <div className="flex items-baseline gap-2">
           <span className="text-xl font-semibold mono">{cost(String(totalCost))}</span>
-          <span className="ml-2 text-xs text-ink-2">total recorded cost</span>
+          <span className="text-xs text-ink-2">total recorded cost</span>
+          <InfoTip label="How this total was calculated" width={310}>
+            <TipTitle>How this total was calculated</TipTitle>
+            <p className="text-[11px] leading-relaxed text-ink-2">
+              <span className="mono">sum(cost_usd)</span> over every turn matching the current
+              filter, grouped by provider × model and then added up. Each turn&apos;s cost was
+              computed once at ingest, from that turn&apos;s token counts and the rate in force
+              when it ran; nothing is repriced here.
+            </p>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-2">
+              {num(totalTurns)} turns are in scope.{' '}
+              {totalUnpriced > 0 ? (
+                <span className="text-warn">
+                  {num(totalUnpriced)} of them have no rate and add nothing, so this is a floor —
+                  the real figure is higher by an unknown amount.
+                </span>
+              ) : (
+                'Every one of them is priced, so nothing is missing from this figure.'
+              )}
+            </p>
+            <TipNote>
+              Recorded, not billed. List price from seeded rates, never reconciled against an
+              invoice.
+            </TipNote>
+          </InfoTip>
         </div>
         <div className="text-sm text-ink-2">
           {num(totalTurns)} turns
@@ -135,9 +257,24 @@ export default async function AggregatesPage({
                 <th className="px-3 py-1.5 font-medium">Model</th>
                 <th className="px-3 py-1.5 font-medium">Attribution</th>
                 <th className="px-3 py-1.5 text-right font-medium">Turns</th>
-                <th className="px-3 py-1.5 text-right font-medium">Input</th>
-                <th className="px-3 py-1.5 text-right font-medium">Output</th>
-                <th className="px-3 py-1.5 text-right font-medium">Cost</th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Input
+                    <TokenColumnTip focus="in" grouping="provider × model pair" />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Output
+                    <TokenColumnTip focus="out" grouping="provider × model pair" />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Cost
+                    <GroupCostTip grouping="provider × model pair" />
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -171,14 +308,15 @@ export default async function AggregatesPage({
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <AggregateTable title="By day (UTC)" rows={byDay} />
-        <AggregateTable title="By project" rows={byProject} />
-        <AggregateTable title="By agent" rows={byAgent} />
-        <AggregateTable title="By provider" rows={byProvider} />
-        <AggregateTable title="By model" rows={byModel} />
+        <AggregateTable title="By day (UTC)" rows={byDay} grouping="day" />
+        <AggregateTable title="By project" rows={byProject} grouping="project" />
+        <AggregateTable title="By agent" rows={byAgent} grouping="agent" />
+        <AggregateTable title="By provider" rows={byProvider} grouping="provider" />
+        <AggregateTable title="By model" rows={byModel} grouping="model" />
         <AggregateTable
           title="By branch"
           rows={byBranch}
+          grouping="branch"
           note="branch names only mean something within a project"
         />
       </div>

@@ -30,6 +30,21 @@ function orderDir(sort: string | undefined): 'ASC' | 'DESC' {
   return sort === 'oldest' ? 'ASC' : 'DESC';
 }
 
+/**
+ * The editor-focus block Claude Code prefixes a prompt with.
+ *
+ * Verified on 2026-09-22: these are the only two leading tags in this archive
+ * (207 of 474 turns), each is closed, and every one carries the real request
+ * after it — so stripping it leaves the prompt, not nothing. A literal, never
+ * user input; it is interpolated into three statements and lives here so they
+ * cannot drift apart. `ltrim` is a separate call because Postgres takes
+ * greediness from the FIRST quantifier, and the non-greedy `.*?` would make a
+ * trailing `[[:space:]]*` match nothing.
+ */
+const IDE_BLOCK_RE = String.raw`^<(ide_opened_file|ide_selection)>.*?</\1>`;
+const STRIP_IDE_BLOCK = (col: string): string =>
+  `ltrim(regexp_replace(${col}, '${IDE_BLOCK_RE}', ''), E' \\t\\r\\n')`;
+
 export interface TurnListRow extends Record<string, unknown> {
   id: string;
   seq: number;
@@ -52,9 +67,30 @@ export interface TurnListRow extends Record<string, unknown> {
   output_tokens: string | null;
   cost_usd: string | null;
   cost_source: string;
+  /**
+   * The per-token counts and the rates this row was priced at, so the cost
+   * cell can show its own working. Every one is NULL on an unpriced turn.
+   */
+  input_tokens: string | null;
+  cache_read_tokens: string | null;
+  cache_write_tokens: string | null;
+  cache_write_5m_tokens: string | null;
+  cache_write_1h_tokens: string | null;
+  input_usd_per_mtok: string | null;
+  output_usd_per_mtok: string | null;
+  cache_read_usd_per_mtok: string | null;
+  cache_write_5m_usd_per_mtok: string | null;
+  cache_write_1h_usd_per_mtok: string | null;
+  rate_source: string | null;
+  effective_from: Date | null;
+  effective_to: Date | null;
+  rate_model: string | null;
   prompt_preview: string | null;
-  /** The turn also carried an editor-focus block, stripped from the preview. */
-  had_ide_context: boolean;
+  /**
+   * Which editor block the turn carried, stripped from the preview:
+   * 'ide_selection', 'ide_opened_file', or null for neither.
+   */
+  ide_kind: string | null;
   tool_call_count: string;
   file_change_count: string;
 }
@@ -134,19 +170,31 @@ export async function listTurns(
             t.started_at, t.ended_at, t.duration_ms, t.status,
             t.token_source, t.total_input_tokens, t.output_tokens,
             t.cost_usd, t.cost_source,
-            -- Claude Code prefixes a turn with an editor block when the file
-            -- in focus or the selection changed. Verified on 2026-09-22: those
-            -- are the only two leading tags in this archive (154 + 53 of 466),
-            -- each is closed, and every one carries the real request after it —
-            -- so truncating the raw text would show 240 characters of
-            -- boilerplate and none of the prompt. Stripped in SQL so the block
-            -- is never transferred. ltrim is a separate call because Postgres
-            -- takes greediness from the FIRST quantifier, and the non-greedy
-            -- .*? would make a trailing [[:space:]]* match nothing.
-            left(ltrim(regexp_replace(t.prompt_text,
-                   '^<(ide_opened_file|ide_selection)>.*?</\\1>', ''), E' \\t\\r\\n'), 240)
-                                                            AS prompt_preview,
-            t.prompt_text ~ '^<(ide_opened_file|ide_selection)>' AS had_ide_context,
+            -- The working behind the cost cell. Joining model_pricing on the
+            -- turn's own pricing_id is a primary-key lookup into a 9-row
+            -- table: the whole list query plans at 0.4 ms with it
+            -- (EXPLAIN ANALYZE, 2026-09-23). Nothing here is TOASTed.
+            t.input_tokens, t.cache_read_tokens, t.cache_write_tokens,
+            t.cache_write_5m_tokens, t.cache_write_1h_tokens,
+            mp.input_usd_per_mtok, mp.output_usd_per_mtok, mp.cache_read_usd_per_mtok,
+            mp.cache_write_5m_usd_per_mtok, mp.cache_write_1h_usd_per_mtok,
+            mp.source AS rate_source, mp.effective_from, mp.effective_to,
+            mp.model_normalized AS rate_model,
+            -- Truncating the raw text would show 240 characters of editor
+            -- boilerplate and none of the prompt, so the block is stripped in
+            -- SQL — it is never transferred. See IDE_BLOCK_RE.
+            left(${STRIP_IDE_BLOCK('t.prompt_text')}, 240)   AS prompt_preview,
+            -- Which block it was, not merely that there was one: a selection
+            -- is something the user made, an open file is something the editor
+            -- sent on its own. Same regex as the strip above, so the badge and
+            -- the preview can never disagree.
+            --
+            -- Screenshots are NOT counted here. They live only in the raw
+            -- event's payload, and counting them per row detoasts every prompt
+            -- payload on the page: 276 ms for 25 rows against 2.3 ms as it
+            -- stands (EXPLAIN ANALYZE, 2026-09-22). They are shown on the turn
+            -- detail page, which fetches one turn deliberately.
+            substring(t.prompt_text from '^<(ide_opened_file|ide_selection)>') AS ide_kind,
             (SELECT count(*) FROM tool_calls tc WHERE tc.turn_id = t.id)   AS tool_call_count,
             (SELECT count(*) FROM file_changes fc WHERE fc.turn_id = t.id) AS file_change_count
        FROM turns t
@@ -154,6 +202,7 @@ export async function listTurns(
        JOIN agents a   ON a.id = t.agent_id
        JOIN sessions s ON s.id = t.session_id
        LEFT JOIN providers pr ON pr.id = t.provider_id
+       LEFT JOIN model_pricing mp ON mp.id = t.pricing_id
        ${where}
       ORDER BY t.started_at ${dir}, t.id ${dir}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -175,6 +224,19 @@ export async function countTurns(filters: TurnFilters): Promise<number> {
 // Filter option lists
 // ---------------------------------------------------------------------------
 
+export interface SessionOption extends Record<string, unknown> {
+  id: string;
+  external_session_id: string;
+  started_at: Date;
+  project_name: string;
+  turns: string;
+  /** Opening words of the session's first prompt, editor block stripped. */
+  first_prompt: string | null;
+}
+
+/** Enough sessions to pick from; past this the dropdown is the wrong tool. */
+export const SESSION_OPTION_LIMIT = 200;
+
 export interface FilterOptions {
   projects: { id: string; name: string; path: string }[];
   agents: { id: string; key: string }[];
@@ -182,19 +244,45 @@ export interface FilterOptions {
   models: { model_normalized: string }[];
   branches: { git_branch: string }[];
   /**
-   * Only populated when a session filter is active. Sessions are not offered
-   * as a dropdown — there are thousands and none is memorable — but a filter
-   * the user cannot see is a filter they cannot undo, so the active one is
-   * resolved to its agent-side id for display.
+   * Sessions, newest first, narrowed to the chosen project. A session id is a
+   * UUID and identifies nothing to a human, so each option carries the date,
+   * the turn count and the opening words of its first prompt — that is what
+   * someone actually remembers a session by.
    */
-  activeSession: { id: string; external_session_id: string } | null;
+  sessions: SessionOption[];
+  /** True when more sessions exist than the dropdown lists. */
+  sessionsTruncated: boolean;
+  /**
+   * The active session filter, resolved for display.
+   *
+   * Still needed alongside `sessions`: the list narrows by project, so a
+   * session filter set from a turn in another project would not appear in it,
+   * and a filter the user cannot see is a filter they cannot undo.
+   */
+  activeSession: SessionOption | null;
 }
+
+/** The SELECT list `sessionOptions()` and `activeSession` must agree on. */
+const SESSION_OPTION_COLUMNS = `
+  s.id, s.external_session_id, s.started_at, p.name AS project_name,
+  (SELECT count(*) FROM turns t WHERE t.session_id = s.id) AS turns,
+  fp.first_prompt`;
+
+const SESSION_OPTION_FROM = `
+  FROM sessions s
+  JOIN projects p ON p.id = s.project_id
+  -- The first prompt is what a session is remembered by. LATERAL with
+  -- ORDER BY seq LIMIT 1 is an index walk, not a scan of the session.
+  LEFT JOIN LATERAL (
+    SELECT left(${STRIP_IDE_BLOCK('t2.prompt_text')}, 70) AS first_prompt
+      FROM turns t2 WHERE t2.session_id = s.id ORDER BY t2.seq LIMIT 1
+  ) fp ON true`;
 
 export async function getFilterOptions(
   projectId?: string,
   sessionId?: string,
 ): Promise<FilterOptions> {
-  const [projects, agents, providers, models, branches, activeSession] = await Promise.all([
+  const [projects, agents, providers, models, branches, sessions, activeSession] = await Promise.all([
     query<{ id: string; name: string; path: string }>(
       `SELECT p.id, p.name, p.path FROM projects p
         WHERE EXISTS (SELECT 1 FROM turns t WHERE t.project_id = p.id)
@@ -220,14 +308,38 @@ export async function getFilterOptions(
         ORDER BY git_branch`,
       [projectId ?? null],
     ),
+    // Narrowed by project, like branches: a session belongs to exactly one,
+    // and an unnarrowed list mixes unrelated work. Only sessions that actually
+    // produced a turn are offered — an empty one filters to an empty page.
+    // One more than the limit is fetched so the bar can say it is truncated
+    // rather than silently showing a prefix.
+    query<SessionOption>(
+      `SELECT ${SESSION_OPTION_COLUMNS}
+         ${SESSION_OPTION_FROM}
+        WHERE ($1::bigint IS NULL OR s.project_id = $1::bigint)
+          AND EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id)
+        ORDER BY s.started_at DESC
+        LIMIT ${SESSION_OPTION_LIMIT + 1}`,
+      [projectId ?? null],
+    ),
     sessionId
-      ? queryOne<{ id: string; external_session_id: string }>(
-          `SELECT id, external_session_id FROM sessions WHERE id = $1::bigint`,
+      ? queryOne<SessionOption>(
+          `SELECT ${SESSION_OPTION_COLUMNS} ${SESSION_OPTION_FROM} WHERE s.id = $1::bigint`,
           [sessionId],
         )
       : Promise.resolve(null),
   ]);
-  return { projects, agents, providers, models, branches, activeSession };
+
+  return {
+    projects,
+    agents,
+    providers,
+    models,
+    branches,
+    sessions: sessions.slice(0, SESSION_OPTION_LIMIT),
+    sessionsTruncated: sessions.length > SESSION_OPTION_LIMIT,
+    activeSession,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -287,36 +399,161 @@ export function getTurn(id: string): Promise<TurnDetail | null> {
   );
 }
 
-export interface CostBreakdownRow extends Record<string, unknown> {
-  input_usd: string;
-  cache_read_usd: string;
-  cache_write_usd: string;
-  output_usd: string;
+export interface PromptMediaRow extends Record<string, unknown> {
+  /** 0-based position in the prompt record's content array — the route's handle. */
+  idx: number;
+  block_type: 'image' | 'document';
+  media_type: string | null;
+  source_type: string | null;
+  /** Decoded size, as an int4 (so `number`). NULL when nothing inline — not 0. */
+  byte_size: number | null;
 }
 
 /**
- * What the turn's cost is made of.
+ * The binary blocks the user attached to a prompt — screenshots and documents.
  *
- * Recomputed from the SAME `model_pricing` row the turn was priced against
- * (`turns.pricing_id`), not from today's rate — a price change inserts a new
- * row, it does not rewrite what past turns cost, and this must not undo that.
- * Verified on 2026-09-22 that the four components sum exactly to `cost_usd`.
+ * These are the one thing a turn carries that `prompt_text` does not: they are
+ * content blocks on the prompt record, so the only copy is the raw event. The
+ * join is on `sessions.external_session_id || ':' || turns.external_turn_id`,
+ * which is exactly how the collector builds `raw_events.external_id` for a log
+ * record (adapters/claude-code.ts → recordExternalId). Verified on 2026-09-22:
+ * it matches all 15 image-carrying turns and the one document-carrying turn in
+ * this archive, with no misses.
  *
- * Returns null for an unpriced turn. There is no breakdown of a cost that was
- * never computed, and a row of zeroes would read as "cost nothing".
+ * Metadata only — the base64 itself is never selected here. A single prompt in
+ * this archive carries a 4.9 MB PDF, and the detail page renders a card for it,
+ * not its bytes. Those come one at a time from `getPromptMediaBlock()`.
+ *
+ * This is deliberately NOT done on the list page. Counting these per row costs
+ * a full detoast of every prompt payload: measured 276 ms for 25 rows against
+ * 2.3 ms for the list as it stands (EXPLAIN ANALYZE, 2026-09-22). That is the
+ * same rule that keeps diff bodies out of list queries.
  */
-export function getCostBreakdown(turnId: string): Promise<CostBreakdownRow | null> {
-  return queryOne<CostBreakdownRow>(
-    `SELECT coalesce(t.input_tokens,0)/1e6 * mp.input_usd_per_mtok AS input_usd,
-            coalesce(t.cache_read_tokens,0)/1e6
-              * coalesce(mp.cache_read_usd_per_mtok, mp.input_usd_per_mtok)      AS cache_read_usd,
-            coalesce(t.cache_write_5m_tokens,0)/1e6
-              * coalesce(mp.cache_write_5m_usd_per_mtok, mp.input_usd_per_mtok)
-            + coalesce(t.cache_write_1h_tokens,0)/1e6
-              * coalesce(mp.cache_write_1h_usd_per_mtok, mp.input_usd_per_mtok)  AS cache_write_usd,
-            coalesce(t.output_tokens,0)/1e6 * mp.output_usd_per_mtok             AS output_usd
+export function getPromptMedia(turnId: string): Promise<PromptMediaRow[]> {
+  return query<PromptMediaRow>(
+    `SELECT (b.idx - 1)::int                       AS idx,
+            b.block->>'type'                       AS block_type,
+            b.block->'source'->>'media_type'       AS media_type,
+            b.block->'source'->>'type'             AS source_type,
+            -- Exact decoded length from the base64 length, without decoding
+            -- megabytes to print a size. Verified against
+            -- octet_length(decode(...)) on every block in this archive.
+            CASE WHEN b.block->'source'->>'data' IS NULL THEN NULL
+                 ELSE length(b.block->'source'->>'data') / 4 * 3
+                      - (length(b.block->'source'->>'data')
+                         - length(rtrim(b.block->'source'->>'data', '=')))
+            END                                    AS byte_size
+       FROM turns t
+       JOIN sessions s ON s.id = t.session_id
+       JOIN raw_events re
+         ON re.agent_id = t.agent_id
+        AND re.layer = 'logs'
+        AND re.session_external_id = s.external_session_id
+        AND re.external_id = s.external_session_id || ':' || t.external_turn_id
+       CROSS JOIN LATERAL jsonb_array_elements(
+            -- The guard is inside the argument, not in WHERE: a LATERAL
+            -- function is not ordered after the filter, and
+            -- jsonb_array_elements raises on a non-array.
+            CASE WHEN jsonb_typeof(re.payload->'message'->'content') = 'array'
+                 THEN re.payload->'message'->'content' ELSE '[]'::jsonb END
+       ) WITH ORDINALITY AS b(block, idx)
+      WHERE t.id = $1::bigint
+        AND t.external_turn_id IS NOT NULL
+        AND b.block->>'type' IN ('image', 'document')
+      ORDER BY b.idx`,
+    [turnId],
+  );
+}
+
+export interface PromptMediaBlock extends Record<string, unknown> {
+  block_type: string;
+  media_type: string | null;
+  source_type: string | null;
+  /** Base64, as the agent recorded it. NULL for a block with no inline data. */
+  data: string | null;
+}
+
+/**
+ * One attached block's bytes, for the preview route.
+ *
+ * Fetched by index so the page can render a thumbnail per attachment without
+ * any of them travelling with the page itself.
+ */
+export function getPromptMediaBlock(turnId: string, idx: number): Promise<PromptMediaBlock | null> {
+  return queryOne<PromptMediaBlock>(
+    `SELECT b.block->>'type'                 AS block_type,
+            b.block->'source'->>'media_type' AS media_type,
+            b.block->'source'->>'type'       AS source_type,
+            b.block->'source'->>'data'       AS data
+       FROM turns t
+       JOIN sessions s ON s.id = t.session_id
+       JOIN raw_events re
+         ON re.agent_id = t.agent_id
+        AND re.layer = 'logs'
+        AND re.session_external_id = s.external_session_id
+        AND re.external_id = s.external_session_id || ':' || t.external_turn_id
+       CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(re.payload->'message'->'content') = 'array'
+                 THEN re.payload->'message'->'content' ELSE '[]'::jsonb END
+       ) WITH ORDINALITY AS b(block, idx)
+      WHERE t.id = $1::bigint
+        AND t.external_turn_id IS NOT NULL
+        AND b.idx - 1 = $2::int
+        AND b.block->>'type' IN ('image', 'document')`,
+    [turnId, idx],
+  );
+}
+
+export interface CostInputsRow extends Record<string, unknown> {
+  input_tokens: string | null;
+  output_tokens: string | null;
+  cache_read_tokens: string | null;
+  cache_write_tokens: string | null;
+  cache_write_5m_tokens: string | null;
+  cache_write_1h_tokens: string | null;
+  input_usd_per_mtok: string | null;
+  output_usd_per_mtok: string | null;
+  cache_read_usd_per_mtok: string | null;
+  cache_write_5m_usd_per_mtok: string | null;
+  cache_write_1h_usd_per_mtok: string | null;
+  effective_from: Date;
+  effective_to: Date | null;
+  rate_source: string;
+  rate_model: string;
+  rate_provider: string;
+}
+
+/**
+ * The inputs to a turn's cost: its token counts and the rates it was priced at.
+ *
+ * The arithmetic itself is NOT done here. It lives in lib/cost.ts, in JS
+ * floats, because that is what the collector ran — `cost_usd` is
+ * `total.toFixed(8)` of a float sum, so reproducing it in SQL numeric would
+ * disagree in the last places and make the displayed working look wrong when
+ * it was right.
+ *
+ * The rate comes from the SAME `model_pricing` row the turn was priced against
+ * (`turns.pricing_id`), never from today's rate. A price change inserts a new
+ * pricing row; it does not rewrite what past turns cost, and a breakdown
+ * computed at today's rate would silently undo that.
+ *
+ * Returns null for an unpriced turn — the join to `model_pricing` finds
+ * nothing. There is no working to show for a sum that was never computed, and
+ * a table of zeroes would read as "this turn cost nothing".
+ */
+export function getCostInputs(turnId: string): Promise<CostInputsRow | null> {
+  return queryOne<CostInputsRow>(
+    `SELECT t.input_tokens, t.output_tokens, t.cache_read_tokens, t.cache_write_tokens,
+            t.cache_write_5m_tokens, t.cache_write_1h_tokens,
+            mp.input_usd_per_mtok, mp.output_usd_per_mtok, mp.cache_read_usd_per_mtok,
+            mp.cache_write_5m_usd_per_mtok, mp.cache_write_1h_usd_per_mtok,
+            mp.effective_from, mp.effective_to,
+            mp.source           AS rate_source,
+            mp.model_normalized AS rate_model,
+            prp.key             AS rate_provider
        FROM turns t
        JOIN model_pricing mp ON mp.id = t.pricing_id
+       JOIN providers prp     ON prp.id = mp.provider_id
       WHERE t.id = $1::bigint`,
     [turnId],
   );
