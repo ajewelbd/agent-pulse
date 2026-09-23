@@ -30,6 +30,21 @@ function orderDir(sort: string | undefined): 'ASC' | 'DESC' {
   return sort === 'oldest' ? 'ASC' : 'DESC';
 }
 
+/**
+ * The editor-focus block Claude Code prefixes a prompt with.
+ *
+ * Verified on 2026-09-22: these are the only two leading tags in this archive
+ * (207 of 474 turns), each is closed, and every one carries the real request
+ * after it — so stripping it leaves the prompt, not nothing. A literal, never
+ * user input; it is interpolated into three statements and lives here so they
+ * cannot drift apart. `ltrim` is a separate call because Postgres takes
+ * greediness from the FIRST quantifier, and the non-greedy `.*?` would make a
+ * trailing `[[:space:]]*` match nothing.
+ */
+const IDE_BLOCK_RE = String.raw`^<(ide_opened_file|ide_selection)>.*?</\1>`;
+const STRIP_IDE_BLOCK = (col: string): string =>
+  `ltrim(regexp_replace(${col}, '${IDE_BLOCK_RE}', ''), E' \\t\\r\\n')`;
+
 export interface TurnListRow extends Record<string, unknown> {
   id: string;
   seq: number;
@@ -165,18 +180,10 @@ export async function listTurns(
             mp.cache_write_5m_usd_per_mtok, mp.cache_write_1h_usd_per_mtok,
             mp.source AS rate_source, mp.effective_from, mp.effective_to,
             mp.model_normalized AS rate_model,
-            -- Claude Code prefixes a turn with an editor block when the file
-            -- in focus or the selection changed. Verified on 2026-09-22: those
-            -- are the only two leading tags in this archive (154 + 53 of 466),
-            -- each is closed, and every one carries the real request after it —
-            -- so truncating the raw text would show 240 characters of
-            -- boilerplate and none of the prompt. Stripped in SQL so the block
-            -- is never transferred. ltrim is a separate call because Postgres
-            -- takes greediness from the FIRST quantifier, and the non-greedy
-            -- .*? would make a trailing [[:space:]]* match nothing.
-            left(ltrim(regexp_replace(t.prompt_text,
-                   '^<(ide_opened_file|ide_selection)>.*?</\\1>', ''), E' \\t\\r\\n'), 240)
-                                                            AS prompt_preview,
+            -- Truncating the raw text would show 240 characters of editor
+            -- boilerplate and none of the prompt, so the block is stripped in
+            -- SQL — it is never transferred. See IDE_BLOCK_RE.
+            left(${STRIP_IDE_BLOCK('t.prompt_text')}, 240)   AS prompt_preview,
             -- Which block it was, not merely that there was one: a selection
             -- is something the user made, an open file is something the editor
             -- sent on its own. Same regex as the strip above, so the badge and
@@ -217,6 +224,19 @@ export async function countTurns(filters: TurnFilters): Promise<number> {
 // Filter option lists
 // ---------------------------------------------------------------------------
 
+export interface SessionOption extends Record<string, unknown> {
+  id: string;
+  external_session_id: string;
+  started_at: Date;
+  project_name: string;
+  turns: string;
+  /** Opening words of the session's first prompt, editor block stripped. */
+  first_prompt: string | null;
+}
+
+/** Enough sessions to pick from; past this the dropdown is the wrong tool. */
+export const SESSION_OPTION_LIMIT = 200;
+
 export interface FilterOptions {
   projects: { id: string; name: string; path: string }[];
   agents: { id: string; key: string }[];
@@ -224,19 +244,45 @@ export interface FilterOptions {
   models: { model_normalized: string }[];
   branches: { git_branch: string }[];
   /**
-   * Only populated when a session filter is active. Sessions are not offered
-   * as a dropdown — there are thousands and none is memorable — but a filter
-   * the user cannot see is a filter they cannot undo, so the active one is
-   * resolved to its agent-side id for display.
+   * Sessions, newest first, narrowed to the chosen project. A session id is a
+   * UUID and identifies nothing to a human, so each option carries the date,
+   * the turn count and the opening words of its first prompt — that is what
+   * someone actually remembers a session by.
    */
-  activeSession: { id: string; external_session_id: string } | null;
+  sessions: SessionOption[];
+  /** True when more sessions exist than the dropdown lists. */
+  sessionsTruncated: boolean;
+  /**
+   * The active session filter, resolved for display.
+   *
+   * Still needed alongside `sessions`: the list narrows by project, so a
+   * session filter set from a turn in another project would not appear in it,
+   * and a filter the user cannot see is a filter they cannot undo.
+   */
+  activeSession: SessionOption | null;
 }
+
+/** The SELECT list `sessionOptions()` and `activeSession` must agree on. */
+const SESSION_OPTION_COLUMNS = `
+  s.id, s.external_session_id, s.started_at, p.name AS project_name,
+  (SELECT count(*) FROM turns t WHERE t.session_id = s.id) AS turns,
+  fp.first_prompt`;
+
+const SESSION_OPTION_FROM = `
+  FROM sessions s
+  JOIN projects p ON p.id = s.project_id
+  -- The first prompt is what a session is remembered by. LATERAL with
+  -- ORDER BY seq LIMIT 1 is an index walk, not a scan of the session.
+  LEFT JOIN LATERAL (
+    SELECT left(${STRIP_IDE_BLOCK('t2.prompt_text')}, 70) AS first_prompt
+      FROM turns t2 WHERE t2.session_id = s.id ORDER BY t2.seq LIMIT 1
+  ) fp ON true`;
 
 export async function getFilterOptions(
   projectId?: string,
   sessionId?: string,
 ): Promise<FilterOptions> {
-  const [projects, agents, providers, models, branches, activeSession] = await Promise.all([
+  const [projects, agents, providers, models, branches, sessions, activeSession] = await Promise.all([
     query<{ id: string; name: string; path: string }>(
       `SELECT p.id, p.name, p.path FROM projects p
         WHERE EXISTS (SELECT 1 FROM turns t WHERE t.project_id = p.id)
@@ -262,14 +308,38 @@ export async function getFilterOptions(
         ORDER BY git_branch`,
       [projectId ?? null],
     ),
+    // Narrowed by project, like branches: a session belongs to exactly one,
+    // and an unnarrowed list mixes unrelated work. Only sessions that actually
+    // produced a turn are offered — an empty one filters to an empty page.
+    // One more than the limit is fetched so the bar can say it is truncated
+    // rather than silently showing a prefix.
+    query<SessionOption>(
+      `SELECT ${SESSION_OPTION_COLUMNS}
+         ${SESSION_OPTION_FROM}
+        WHERE ($1::bigint IS NULL OR s.project_id = $1::bigint)
+          AND EXISTS (SELECT 1 FROM turns t WHERE t.session_id = s.id)
+        ORDER BY s.started_at DESC
+        LIMIT ${SESSION_OPTION_LIMIT + 1}`,
+      [projectId ?? null],
+    ),
     sessionId
-      ? queryOne<{ id: string; external_session_id: string }>(
-          `SELECT id, external_session_id FROM sessions WHERE id = $1::bigint`,
+      ? queryOne<SessionOption>(
+          `SELECT ${SESSION_OPTION_COLUMNS} ${SESSION_OPTION_FROM} WHERE s.id = $1::bigint`,
           [sessionId],
         )
       : Promise.resolve(null),
   ]);
-  return { projects, agents, providers, models, branches, activeSession };
+
+  return {
+    projects,
+    agents,
+    providers,
+    models,
+    branches,
+    sessions: sessions.slice(0, SESSION_OPTION_LIMIT),
+    sessionsTruncated: sessions.length > SESSION_OPTION_LIMIT,
+    activeSession,
+  };
 }
 
 // ---------------------------------------------------------------------------

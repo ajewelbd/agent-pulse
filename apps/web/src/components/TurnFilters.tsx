@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { SearchHotkey } from './SearchHotkey';
 import { IconCalendar, IconChevronDown, IconFilter, IconSearch } from './icons';
-import { hasActiveFilters, listHref } from '@/lib/filters';
-import { shortId } from '@/lib/format';
-import type { FilterOptions, TurnFilters } from '@/lib/queries';
+import { hasActiveFilters } from '@/lib/filters';
+import { shortId, utcClock, utcDay } from '@/lib/format';
+import { SESSION_OPTION_LIMIT, type FilterOptions, type SessionOption, type TurnFilters } from '@/lib/queries';
 
 /**
  * Filter bar.
@@ -21,11 +21,14 @@ function PillSelect({
   name,
   value,
   children,
+  /** Caps the closed pill's width. The open dropdown is unaffected. */
+  maxWidth,
 }: {
   label: string;
   name: string;
   value: string;
   children: React.ReactNode;
+  maxWidth?: string;
 }) {
   const active = value !== '';
   return (
@@ -34,11 +37,12 @@ function PillSelect({
         active ? 'border-line bg-surface-2' : 'border-line bg-surface hover:bg-surface-2'
       }`}
     >
-      <span className="text-ink-3">{label}</span>
+      <span className="shrink-0 text-ink-3">{label}</span>
       <select
         name={name}
         defaultValue={value}
-        className={`pill-select cursor-pointer bg-transparent outline-none ${
+        style={maxWidth ? { maxWidth } : undefined}
+        className={`pill-select cursor-pointer truncate bg-transparent outline-none ${
           active ? 'font-medium text-ink' : 'text-ink-2'
         }`}
       >
@@ -47,6 +51,24 @@ function PillSelect({
       <IconChevronDown className="pointer-events-none absolute right-2 h-3.5 w-3.5 text-ink-3" />
     </label>
   );
+}
+
+/**
+ * How a session is named in the dropdown.
+ *
+ * A session id is a UUID: it identifies the transcript file on disk, and
+ * nothing to a person. What someone actually remembers is when it was and what
+ * they asked first, so that leads, with the turn count for size and the short
+ * id last as the handle back to the file.
+ */
+function sessionLabel(s: SessionOption): string {
+  const opening = s.first_prompt?.replace(/\s+/g, ' ').trim();
+  const parts = [
+    `${utcDay(s.started_at)} ${utcClock(s.started_at)}`,
+    `${s.turns} turn${s.turns === '1' ? '' : 's'}`,
+    opening ? `“${opening}”` : `(no prompt text) ${shortId(s.external_session_id)}`,
+  ];
+  return parts.join(' · ');
 }
 
 export function TurnFiltersBar({
@@ -59,6 +81,20 @@ export function TurnFiltersBar({
   total: number;
 }) {
   const active = hasActiveFilters(filters);
+
+  // The option list narrows by project, so a session filter carried over from
+  // another project would vanish from it — and a `defaultValue` matching no
+  // option silently reverts to "All" on the next submit, clearing a filter the
+  // user never touched. Pinning the active one in keeps it selectable.
+  const listed = options.sessions;
+  const activeMissing =
+    options.activeSession && !listed.some((s) => s.id === options.activeSession!.id);
+  const sessions = activeMissing ? [options.activeSession!, ...listed] : listed;
+
+  const sessionsByProject = sessions.reduce<Record<string, SessionOption[]>>((acc, s) => {
+    (acc[s.project_name] ??= []).push(s);
+    return acc;
+  }, {});
 
   return (
     <form method="GET" className="card mb-5 p-4">
@@ -114,33 +150,34 @@ export function TurnFiltersBar({
           Filters
         </span>
 
-        {/* Not a dropdown — sessions are too many and too opaque to pick from
-            a list. It is set by "Open session" on a turn, and shown here so it
-            can be seen and removed like any other filter. */}
-        {options.activeSession && (
-          <>
-            <input type="hidden" name="sessionId" value={options.activeSession.id} />
-            <span className="inline-flex items-center gap-2 rounded-lg border border-accent/45 bg-accent/10 py-1.5 pr-1.5 pl-3 text-xs">
-              <span className="text-ink-3">Session</span>
-              <span className="mono font-medium text-accent" title={options.activeSession.external_session_id}>
-                {shortId(options.activeSession.external_session_id)}
-              </span>
-              <Link
-                href={listHref({ ...filters, sessionId: undefined })}
-                aria-label="Remove session filter"
-                className="rounded px-1 text-ink-3 hover:text-ink"
-              >
-                ✕
-              </Link>
-            </span>
-          </>
-        )}
-
         <PillSelect label="Project" name="projectId" value={filters.projectId ?? ''}>
           <option value="">All</option>
           {options.projects.map((p) => (
             <option key={p.id} value={p.id} title={p.path}>{p.name}</option>
           ))}
+        </PillSelect>
+
+        {/* Sessions sit next to Project because a session belongs to exactly
+            one, and the list narrows with it. Grouped by project so an
+            unnarrowed list is still readable. */}
+        <PillSelect label="Session" name="sessionId" value={filters.sessionId ?? ''} maxWidth="19rem">
+          <option value="">All</option>
+          {Object.entries(sessionsByProject).map(([project, group]) => (
+            <optgroup key={project} label={project}>
+              {group.map((s) => (
+                <option key={s.id} value={s.id} title={s.external_session_id}>
+                  {sessionLabel(s)}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          {/* Say the list is a prefix rather than letting it look complete.
+              Narrowing by project is the way to reach what is not here. */}
+          {options.sessionsTruncated && (
+            <option value="" disabled>
+              — newest {SESSION_OPTION_LIMIT} only; narrow by project to see more —
+            </option>
+          )}
         </PillSelect>
 
         <PillSelect label="Agent" name="agentId" value={filters.agentId ?? ''}>

@@ -122,6 +122,7 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/app/healthz/route.ts` | `SELECT 1`; 503 on failure |
 | `src/app/layout.tsx`, `globals.css`, `not-found.tsx` | Shell and theme |
 | `src/components/TurnFilters.tsx` | Plain GET form — filter state lives in the URL, so views are linkable |
+| | Sessions are a dropdown, narrowed by project and labelled by date · turns · opening prompt |
 | `src/components/CommandTimeline.tsx` | Per-turn command list; NULL exit renders "unknown" |
 | `src/components/DiffView.tsx` | Diff-syntax rendering, collapsed by default |
 | `src/components/PromptAttachments.tsx` | The rail beside the prompt: screenshots, selection, open file, mentions |
@@ -131,6 +132,24 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/components/TokenTip.tsx` | What a turn's token counts are made of, on an info icon |
 | `src/components/HealthBanner.tsx` | States where the numbers are incomplete, and what to do about each |
 | `src/components/Chips.tsx` | Provenance chips — every one exists to make a *known unknown* visible |
+
+### The session filter
+
+`sessionId` was always a filter — the detail page's "Open session" set it — but
+it was not offered in the bar, on the stated grounds that there are "thousands
+of sessions and none is memorable". Measured on 2026-09-23: **25 sessions**,
+all with turns. The premise was an assumption, not a count.
+
+It is a dropdown now, narrowed by project exactly as branches are, and grouped
+by project when no project is chosen. A session id is a UUID and names nothing
+to a person, so each option reads *date · turn count · opening words of the
+first prompt* — the editor block stripped, via the shared `IDE_BLOCK_RE` in
+queries.ts. Options are capped at `SESSION_OPTION_LIMIT` (200) and the list
+says so when it is a prefix.
+
+The active session is pinned into the list even when the project narrowing
+would exclude it. Without that, a `defaultValue` matching no option reverts to
+"All" and the next submit silently drops a filter the user never touched.
 
 ### Showing how a cost was calculated
 
