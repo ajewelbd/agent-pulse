@@ -24,10 +24,11 @@ import {
   IconTerminal,
 } from '@/components/icons';
 import { CostTip } from '@/components/CostTip';
+import { TokenTip } from '@/components/TokenTip';
 import { ideContextPath, parsePrompt } from '@/lib/attachments';
 import { costWorking, sumParts } from '@/lib/cost';
 import { listHref, readFilters } from '@/lib/filters';
-import { compactNum, cost, duration, num, shortId, tailPath, utcClock, utcLong } from '@/lib/format';
+import { compactNum, cost, duration, num, shortId, tailPath, tokenCount, utcClock, utcLong } from '@/lib/format';
 import {
   getCostInputs,
   getFileChanges,
@@ -336,7 +337,8 @@ export default async function TurnDetailPage({
             <div className={CARD_HEAD}>
               <h2 className="text-sm font-semibold">Response</h2>
               <span className="mono ml-auto flex items-center gap-2 text-xs text-ink-2">
-                {compactNum(turn.output_tokens)} tokens
+                {tokenCount(turn.output_tokens, turn.token_source)} tokens
+                <TokenTip row={turn} focus="out" width={300} />
                 <TokenSourceChip source={turn.token_source} />
               </span>
             </div>
@@ -474,15 +476,28 @@ export default async function TurnDetailPage({
           <Card className="p-4">
             <div className="eyebrow flex items-center gap-1.5">
               <IconLayers className="h-3.5 w-3.5" /> Tokens
+              <span className="ml-auto">
+                <TokenTip row={turn} focus="in" width={310} />
+              </span>
             </div>
             <div className="mt-2 flex items-end gap-5">
               <div>
-                <div className="mono text-2xl leading-none font-semibold">{compactNum(turn.total_input_tokens)}</div>
+                {/* tokenCount, not compactNum: total_input_tokens is generated
+                    with coalesce(…,0), so a turn that reported no usage would
+                    otherwise claim it used none. */}
+                <div className="mono text-2xl leading-none font-semibold">
+                  {tokenCount(turn.total_input_tokens, turn.token_source)}
+                </div>
                 <div className="mt-1 text-[11px] text-ink-2">in</div>
               </div>
               <div>
-                <div className="mono text-2xl leading-none font-semibold text-out">{compactNum(turn.output_tokens)}</div>
-                <div className="mt-1 text-[11px] text-ink-2">out</div>
+                <div className="mono text-2xl leading-none font-semibold text-out">
+                  {tokenCount(turn.output_tokens, turn.token_source)}
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-ink-2">
+                  out
+                  <TokenTip row={turn} focus="out" width={300} />
+                </div>
               </div>
               {ratio !== null && (
                 <span

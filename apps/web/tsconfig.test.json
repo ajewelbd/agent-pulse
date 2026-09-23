@@ -18,6 +18,8 @@
     "src/lib/attachments.ts",
     "src/lib/attachments.test.ts",
     "src/lib/cost.ts",
-    "src/lib/cost.test.ts"
+    "src/lib/cost.test.ts",
+    "src/lib/tokens.ts",
+    "src/lib/tokens.test.ts"
   ]
 }

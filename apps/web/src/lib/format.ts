@@ -24,6 +24,26 @@ export function compactNum(value: string | number | null | undefined): string {
   return n.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 }
 
+/**
+ * A token count, respecting `token_source`.
+ *
+ * `turns.total_input_tokens` is generated with `coalesce(…, 0)`, so a turn
+ * whose usage was never reported has 0 there rather than NULL — and `num()`
+ * cannot tell that apart from a genuine zero. Before this existed, all 16
+ * unreported turns in this archive rendered "0 in", which is exactly the claim
+ * the schema's CHECK constraints exist to prevent. `token_source = 'unknown'`
+ * is the flag that distinguishes them; it is set by the adapter only when no
+ * assistant record in the turn carried usage at all.
+ */
+export function tokenCount(
+  value: string | number | null | undefined,
+  source: string | null | undefined,
+  compact = true,
+): string {
+  if (source === 'unknown') return '—';
+  return compact ? compactNum(value) : num(value);
+}
+
 export function cost(value: string | null | undefined, source?: string): string {
   if (source === 'free_local') return 'free (local)';
   if (value === null || value === undefined) return 'not priced';

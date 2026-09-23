@@ -2,12 +2,13 @@ import Link from 'next/link';
 import { TurnFiltersBar } from '@/components/TurnFilters';
 import { CostChip, ProviderChip, StatusDot } from '@/components/Chips';
 import { CostTip } from '@/components/CostTip';
+import { TokenTip } from '@/components/TokenTip';
 import { HealthBanner } from '@/components/HealthBanner';
 import { Pagination } from '@/components/Pagination';
 import { StatTiles } from '@/components/StatTiles';
 import { IconChevronDown, IconFile, IconTerminal, IconWarning } from '@/components/icons';
 import { readFilters, sortToggleHref, turnHref } from '@/lib/filters';
-import { compactNum, cost, duration, shortId, utcClock, utcDay } from '@/lib/format';
+import { cost, duration, shortId, tokenCount, utcClock, utcDay } from '@/lib/format';
 import {
   PAGE_SIZE,
   countTurns,
@@ -192,11 +193,24 @@ export default async function TurnListPage({
                         </div>
                       </td>
 
-                      <td className="mono px-3 py-3 text-right text-xs whitespace-nowrap">
-                        {compactNum(t.total_input_tokens)}
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* tokenCount, not compactNum: total_input_tokens is
+                              generated with coalesce(…,0), so an unreported
+                              turn arrives here as a real 0. */}
+                          <span className="mono text-xs">
+                            {tokenCount(t.total_input_tokens, t.token_source)}
+                          </span>
+                          <TokenTip row={t} focus="in" />
+                        </div>
                       </td>
-                      <td className="mono px-3 py-3 text-right text-xs whitespace-nowrap">
-                        {compactNum(t.output_tokens)}
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="mono text-xs">
+                            {tokenCount(t.output_tokens, t.token_source)}
+                          </span>
+                          <TokenTip row={t} focus="out" />
+                        </div>
                       </td>
 
                       <td className="px-3 py-3 text-right whitespace-nowrap">

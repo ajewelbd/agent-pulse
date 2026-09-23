@@ -112,6 +112,8 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/lib/attachments.test.ts` | Parser regression cases, every fixture a real stored prompt |
 | `src/lib/cost.ts` | Reconstructs the arithmetic behind a turn's cost, and checks it against the stored value |
 | `src/lib/cost.test.ts` | Cost-working cases, fixtures taken from real stored turns |
+| `src/lib/tokens.ts` | What a token count is made of, and which counts are absent rather than zero |
+| `src/lib/tokens.test.ts` | Token-breakdown cases, fixtures taken from real stored turns |
 | `src/app/page.tsx` | Turn list: filters, keyset pagination |
 | `src/app/turns/[id]/page.tsx` | Turn detail: prompt, attachments, response, commands, diffs |
 | `src/app/turns/[id]/export/route.ts` | One turn as JSON, provenance columns included |
@@ -126,6 +128,7 @@ page — health, the JSON export, and one prompt attachment's bytes.
 | `src/components/ImagePreview.tsx` | Screenshot thumbnail + full-size preview overlay |
 | `src/components/InfoTip.tsx` | The info icon and its panel — portalled, so tables cannot clip it |
 | `src/components/CostTip.tsx` | One turn's cost, line by line, on an info icon |
+| `src/components/TokenTip.tsx` | What a turn's token counts are made of, on an info icon |
 | `src/components/HealthBanner.tsx` | States where the numbers are incomplete, and what to do about each |
 | `src/components/Chips.tsx` | Provenance chips — every one exists to make a *known unknown* visible |
 
@@ -157,6 +160,30 @@ This replaced a SQL `getCostBreakdown()` that coalesced a NULL cache-read rate
 to the input rate. No pricing row in this database has a NULL rate, so it was
 correct here and wrong in principle — the collector charges nothing for a rate
 it does not have.
+
+### Showing what a token count is made of
+
+The same info-icon treatment as costs, in `lib/tokens.ts` and `TokenTip.tsx`.
+The input figure is `turns.total_input_tokens`, a generated column that
+migration 004 defines as `coalesce(input_tokens,0) +
+coalesce(cache_read_tokens,0) + coalesce(cache_write_tokens,0)`, so the three
+parts always reconstruct it. Checked across all 474 turns on 2026-09-23: zero
+rows differ.
+
+Two things that column hides, and that this code exists to surface:
+
+- **A turn that reported no usage has 0 there, not NULL.** The `coalesce` in
+  the generated column erases the absence, so no null check can catch it —
+  `token_source = 'unknown'` is the only signal. All 16 such turns in this
+  archive rendered **"0 in"** before this, which is precisely what the "absence
+  is not zero" invariant forbids. `tokenCount()` in format.ts renders "—" for
+  them and `tokenWorking()` returns null.
+- **The 5m/1h cache-write buckets do not always fit inside the cache-write
+  total.** Turns 8610 and 17550 report *more* in the buckets than in the total,
+  by 2,890 and 1,135 tokens. Both are the provider's own figures, accumulated
+  over the turn's assistant messages; neither is corrected here. The panel says
+  the two disagree, and which number feeds what: the input total uses the
+  reported total, the cost uses the buckets.
 
 ### Prompt attachments
 
@@ -209,6 +236,7 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 | change what the dashboard queries | `apps/web/src/lib/queries.ts`, nowhere else |
 | change how prompt attachments are recognised | `apps/web/src/lib/attachments.ts` — **and add a case to its test** |
 | change how a cost is explained on screen | `apps/web/src/lib/cost.ts` — **and keep it a mirror of `ingest.ts` → `computeCost()`** |
+| change how a token count is explained, or rendered when absent | `apps/web/src/lib/tokens.ts` and `format.ts` → `tokenCount()` |
 | support a new agent | `apps/collector/src/adapters/` |
 | change how paths translate | `apps/collector/src/paths.ts` and `PATH_MAP` |
 | understand why a turn has no provider | `reconciler.ts` → `applyProviderAttribution()` |

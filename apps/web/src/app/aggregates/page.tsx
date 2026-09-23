@@ -51,6 +51,49 @@ function GroupCostTip({ grouping }: { grouping: string }) {
   );
 }
 
+/**
+ * What a token column in a rollup contains.
+ *
+ * Input is the column that misleads if left unexplained: it is the *billable*
+ * figure, and on agent traffic it is overwhelmingly cache reads, which cost a
+ * tenth of fresh input. A reader who takes it for uncached input will conclude
+ * the spend is impossible.
+ */
+function TokenColumnTip({ focus, grouping }: { focus: 'in' | 'out'; grouping: string }) {
+  const label = focus === 'in' ? 'What this input column counts' : 'What this output column counts';
+  return (
+    <InfoTip label={label} width={300}>
+      <TipTitle>{label}</TipTitle>
+      {focus === 'in' ? (
+        <>
+          <p className="text-[11px] leading-relaxed text-ink-2">
+            <span className="mono">sum(total_input_tokens)</span> over the turns in each {grouping}
+            , where each turn&apos;s total is{' '}
+            <span className="mono">
+              input + cache&nbsp;read + cache&nbsp;write
+            </span>{' '}
+            — everything the provider charged for on the way in, not uncached input alone.
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-2">
+            Cache reads usually dominate it, and they are the cheapest class, so a large number
+            here does not imply a large bill. Open any turn to see that turn&apos;s split.
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-ink-2">
+          <span className="mono">sum(output_tokens)</span> over the turns in each {grouping} —
+          everything the models generated, prose and tool calls alike. It has no sub-parts, and it
+          is the priciest class: 5× uncached input on every rate seeded here.
+        </p>
+      )}
+      <TipNote>
+        A turn whose usage was never reported has no counts at all and adds nothing to either
+        column, though it is still counted under <strong>Turns</strong>.
+      </TipNote>
+    </InfoTip>
+  );
+}
+
 function AggregateTable({
   title,
   rows,
@@ -79,8 +122,18 @@ function AggregateTable({
               <tr className="border-b border-line">
                 <th className="px-3 py-1.5 font-medium">&nbsp;</th>
                 <th className="px-3 py-1.5 text-right font-medium">Turns</th>
-                <th className="px-3 py-1.5 text-right font-medium">Input</th>
-                <th className="px-3 py-1.5 text-right font-medium">Output</th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Input
+                    <TokenColumnTip focus="in" grouping={grouping} />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Output
+                    <TokenColumnTip focus="out" grouping={grouping} />
+                  </span>
+                </th>
                 <th className="px-3 py-1.5 text-right font-medium">
                   <span className="inline-flex items-center gap-1.5">
                     Cost
@@ -204,8 +257,18 @@ export default async function AggregatesPage({
                 <th className="px-3 py-1.5 font-medium">Model</th>
                 <th className="px-3 py-1.5 font-medium">Attribution</th>
                 <th className="px-3 py-1.5 text-right font-medium">Turns</th>
-                <th className="px-3 py-1.5 text-right font-medium">Input</th>
-                <th className="px-3 py-1.5 text-right font-medium">Output</th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Input
+                    <TokenColumnTip focus="in" grouping="provider × model pair" />
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-right font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Output
+                    <TokenColumnTip focus="out" grouping="provider × model pair" />
+                  </span>
+                </th>
                 <th className="px-3 py-1.5 text-right font-medium">
                   <span className="inline-flex items-center gap-1.5">
                     Cost
