@@ -4,6 +4,11 @@ PostgreSQL 16. 13 tables, 8 enums, 22 check constraints, 43 indexes.
 All seven migrations were applied, rolled back, and re-applied against
 `postgres:16.14` on 2026-09-11; results in [Verification](#verification).
 
+> This is the Phase 2 snapshot (migrations 001–007). Migrations 008–014 came
+> later and add `proxy_requests` (010), `compactions` (013) and Gemini rates
+> (014), bringing the total to 15 tables. The current list is in
+> [map.md](map.md#migrations).
+
 ## Layout
 
 ```

@@ -54,6 +54,8 @@ Everything that both the collector and the proxy must agree on.
 | 011 | exit_code_comment | corrects 005's false claim that PostToolUse carries exit codes |
 | 012 | exit_code_from_hooks | documents the observed derivation rule from `PostToolUseFailure` |
 | 013 | compactions | `compactions` — operator-initiated compactions, with the settings that made each |
+| 014 | google_pricing | first Gemini rates (operator-supplied 2026-09-24, unverified); no long-context tier |
+| 015 | opus_5_5_pricing | `claude-opus-5-5` rates; cache writes derived from the 1.25× / 2× multipliers |
 
 011 and 012 exist because **an applied migration is never edited**. When one
 turns out to state something false, the correction is a new migration.
@@ -71,8 +73,9 @@ turns out to state something false, the correction is a new migration.
 | `src/server.ts` | Layer 2 hook receiver on `:4317` + `/healthz` + `/v1/compactions` (the dashboard's only write path) |
 | `src/reconciler.ts` | Closes stale partials; correlates proxy calls; applies precedence per field |
 | `src/adapters/types.ts` | The `AgentAdapter` contract — `discover()` and `parse()` |
-| `src/adapters/claude-code.ts` | The one verified adapter |
-| `src/adapters/gemini-cli.ts` | Written, **unverified**, disabled by default |
+| `src/adapters/claude-code.ts` | Claude Code — append-only JSONL, resumed from a byte offset |
+| `src/adapters/gemini-cli.ts` | Gemini CLI — legacy whole-file JSON and 0.61.0 JSONL event log, both re-parsed in full. On in compose, off by default in `config.ts` |
+| `src/gemini-cli.test.ts` | JSONL replay: rewinds via `$set`, double-written tool messages, cached input stored uncached |
 | `src/paths.test.ts` | Path-translation cases |
 | `src/redaction.test.ts` | Regression cases for the two credential leaks found in v1, + version assertion |
 
@@ -352,7 +355,7 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 
 | You want to | Go to |
 |---|---|
-| change what a turn's cost is | `ingest.ts` → `computeCost()`, and the rates in migration 003 |
+| change what a turn's cost is | `ingest.ts` → `computeCost()`, and the rates in migrations 003 (Anthropic) and 014 (Gemini) |
 | add or fix a redaction pattern | `packages/schema/src/redaction.ts` — **and bump `version`** |
 | change what the dashboard queries | `apps/web/src/lib/queries.ts`, nowhere else |
 | change how prompt attachments are recognised | `apps/web/src/lib/attachments.ts` — **and add a case to its test** |

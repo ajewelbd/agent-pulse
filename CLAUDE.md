@@ -116,5 +116,11 @@ Not done — don't assume otherwise:
 - The proxy has **never carried real traffic**, so every provider is inferred.
 - Costs have **never been checked against an invoice**.
 - Layer 4 (OTLP receiver) is not built.
-- Adapters: Claude Code verified; Gemini written but unverified and disabled;
-  Codex / Qwen / Cursor / Copilot have none.
+- Adapters: Claude Code verified; Gemini CLI verified against 0.61.0 (legacy
+  JSON + current JSONL), enabled by default in `compose.yaml` but `false` by
+  default in `config.ts` outside compose; Codex / Qwen / Cursor / Copilot have
+  none.
+- **Git gap-fill** is not built: `git` is in the collector image but nothing
+  calls it, so `git_head_sha` and `git_dirty` are always NULL.
+- **Retention / hard-delete** by project or date range is not built.
+- Gemini rates (migration 014) are operator-supplied and unverified.

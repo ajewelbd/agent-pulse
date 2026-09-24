@@ -41,8 +41,9 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 
 - Docker with Compose v2
 - Node 20+ and pnpm 10 — only for running things outside containers
-- An agent that writes transcripts. Claude Code is verified; Gemini CLI has an
-  adapter but is unverified and off by default.
+- An agent that writes transcripts. Claude Code and Gemini CLI are verified.
+  Gemini is on by default under compose; set `AGENT_GEMINI_CLI_ENABLED=false`
+  if `~/.gemini` does not exist.
 
 ## Quickstart
 
@@ -160,9 +161,11 @@ Stated plainly because the dashboard's own banner states them too:
 |---|---|
 | Hook enrichment pass not written | Exit codes, measured durations and subagent ids are captured in `raw_events` but not folded into `tool_calls` yet |
 | Proxy has never carried real traffic | Every turn's provider is **inferred** from the model id, which cannot distinguish direct from gateway traffic |
-| Costs never checked against an invoice | Rates are seeded from a pricing page; treat totals as derived, not billing-authoritative |
+| Costs never checked against an invoice | Anthropic rates are from a pricing page, Gemini rates were supplied by the operator; treat totals as derived, not billing-authoritative |
 | Unpriced turns are excluded from totals | Cost totals **understate** spend rather than being wrong |
-| Only Claude Code is verified | Codex, Qwen, Cursor and Copilot have no adapter; Gemini's is unverified |
+| Two agents verified | Claude Code and Gemini CLI. Codex, Qwen, Cursor and Copilot have no adapter |
+| Git gap-fill not built | Branch comes from the transcript; HEAD sha and dirty flag are always empty |
+| No retention / hard-delete | History only grows; delete by hand if needed (`make backup` first) |
 | Layer 4 (OTLP receiver) not built | — |
 
 ## Documentation
