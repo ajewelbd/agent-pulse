@@ -122,6 +122,13 @@ projects resolved by hash**, cost correctly `unpriced` (no Gemini rates seeded
 are folded into `output_tokens` as model-generated tokens. This affects no cost
 today precisely because Gemini is unpriced.
 
+> **Update 2026-09-24.** Superseded in three ways. Gemini CLI 0.61.0 writes an
+> append-only JSONL event log (`session-*.jsonl`) that *does* record tool calls,
+> now parsed by `replayJsonl` alongside the legacy format. `tokens.input` was
+> found to include `tokens.cached`, so the adapter now stores the uncached
+> remainder as `input_tokens`. And migration 014 seeds Gemini rates, so turns on
+> the ten seeded models can now be priced. The adapter is enabled by default in `compose.yaml`.
+
 ## Reconciler
 
 Correlates proxy observations to turns on `(model, time window)` with a

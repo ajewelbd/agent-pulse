@@ -28,7 +28,8 @@ So the system captures all three and records, per fact, which one supplied it.
    HOST                                    CONTAINERS
    ─────                                   ──────────
 
-   ~/.claude/projects/*.jsonl ──(ro bind)──▶ ┌───────────┐
+   ~/.gemini/tmp/*/chats/*    ──(ro bind)─┐
+   ~/.claude/projects/*.jsonl ──(ro bind)─┴▶ ┌───────────┐
                                              │ collector │──┐
    ~/.claude/settings.json                   │  :4317    │  │
         │ hooks                              └───────────┘  │
@@ -82,6 +83,11 @@ different content afterwards.
 
 Rotation and truncation are both detected (inode change; size below the recorded
 offset) and both mean "re-read this file from zero".
+
+Gemini CLI is the exception to offset resumption: its legacy JSON is rewritten
+in place, and in its JSONL log a later `$set` line can replace earlier
+messages. So each Gemini file is re-parsed whole, and idempotency comes from
+turn identity (the prompt's message id) rather than the offset.
 
 ### Failure isolation
 
@@ -253,8 +259,10 @@ started_at)` against an `effective_from` / `effective_to` period.
   back-filled. That would apply today's rates to an old turn, which is exactly
   what "never recomputed retroactively" forbids.
 
-Rates were seeded from a pricing page and have **never been checked against an
-invoice**. Treat totals as derived, not billing-authoritative.
+Anthropic rates (migration 003) were seeded from a pricing page; Gemini rates
+(migration 014) were supplied by the operator and not independently checked.
+Neither has **ever been checked against an invoice**. Treat totals as derived,
+not billing-authoritative.
 
 ---
 

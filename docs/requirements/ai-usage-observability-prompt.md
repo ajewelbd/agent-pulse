@@ -1,218 +1,241 @@
 # Role
 
-You are a senior backend/platform engineer. Build **"AI Usage Observability"** — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
+You are a senior backend/platform engineer working on **"AI Usage Observability"** — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
+
+Phases 1–5 are built. This brief describes the system **as it exists in the codebase**, and marks what is still open. Read [CLAUDE.md](../../CLAUDE.md), [architecture.md](../architecture.md) and [map.md](../map.md) before changing anything.
+
+Status markers used below: ✅ built · ⚠️ partial · ❌ not built.
 
 ---
 
-## Target agents (v1)
+## Target agents
 
-Claude Code, Codex CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI.
+v1 targets: Claude Code, Codex CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI. Gemini CLI was added later as a second verified format.
 
-Design for N agents via a pluggable adapter interface. Adding an agent must mean writing one adapter + one config entry, nothing else.
+| Agent | Adapter | Status |
+|---|---|---|
+| Claude Code | `apps/collector/src/adapters/claude-code.ts` | ✅ verified, enabled |
+| Gemini CLI | `apps/collector/src/adapters/gemini-cli.ts` | ✅ legacy JSON + JSONL (verified against 0.61.0, 2026-09-24); enabled by default in `compose.yaml`, off by default in `config.ts` |
+| Codex CLI, Qwen Code, Cursor CLI | none | ❌ not installed on this machine — format unverified |
+| GitHub Copilot CLI | none | ❌ `~/.copilot` writes no transcripts; Layer 3 proxy is the only viable source |
 
----
-
-## What a dashboard row must show
-
-One row = one **turn** (one user prompt → one assistant completion), with:
-
-1. **project** — repo/folder name + absolute path
-2. **input prompt text** — full, searchable
-3. **input token count** — plus `cache_read` / `cache_write` tokens when reported
-4. **output response** — rendered as markdown
-5. **output token count**
-6. **executed shell commands** — ordered, with exit code + duration when available
-7. **files added/modified/deleted** — path, change type, +/- line counts, and the unified diff of the change itself
-8. **start time** (UTC)
-9. **end time** (UTC), plus derived duration and cost
-10. **provider** — `anthropic` / `openai` / `google` / `dashscope` / `openrouter` / `ollama` / `github-copilot` / `azure` / `unknown`. Distinct from the agent that invoked it.
-11. **model name** exactly as the provider reported it, plus a normalized model id
-12. **git branch** at the time of the turn, with HEAD sha and dirty-tree flag
+Adding an agent = one file in `apps/collector/src/adapters/` implementing `AgentAdapter` (`discover()` + `parse()`), one `case` in the registry in `main.ts`, plus its mount, `PATH_MAP` entry and `AGENT_<NAME>_ENABLED` flag. No migration, no change to `ingest.ts`. Agents and providers are **lookup tables**, not enums, so this stays true.
 
 ---
 
-## Architecture decisions (fixed — do not relitigate)
+## What a dashboard row shows
 
-- **Storage:** PostgreSQL 16. Normalized tables + `raw_payload JSONB` on every ingested event for provenance and replay. `tsvector` GIN index for prompt/response search. No Mongo.
-- **Deployment:** local-first. Nothing leaves the machine. Everything runs under Docker Compose — see [Running in Docker](#running-in-docker).
-- **Collector:** Node 20 + TypeScript (file watching, NDJSON stream parsing, long-running process).
-- **Dashboard:** Next.js (App Router) + Tailwind + server components. Read-only against Postgres.
-- **Layout:** single monorepo — `apps/collector`, `apps/proxy`, `apps/web`, `packages/schema`.
-- **Migrations:** versioned, reversible, with a documented rollback for each.
+One row = one **turn** (one user prompt → one assistant completion):
 
----
+| # | Field | Status |
+|---|---|---|
+| 1 | project — name + absolute **host** path | ✅ |
+| 2 | prompt text — full, redacted, full-text searchable | ✅ |
+| 3 | input tokens + `cache_read` + `cache_write` (split 5m / 1h) and materialized `total_input_tokens` | ✅ |
+| 4 | response — rendered markdown (no raw HTML injection) | ✅ |
+| 5 | output tokens | ✅ |
+| 6 | shell commands — ordered, with exit code + duration | ⚠️ commands ✅; durations are `derived` from transcripts; **exit codes are NULL ("unknown")** until hook enrichment is built |
+| 7 | file changes — path, change type, +/- lines, unified diff | ✅ from agent edit payloads (Claude Code); Gemini records none |
+| 8–9 | start / end (UTC), duration, cost | ✅ |
+| 10 | provider, with `provider_source` | ✅ — all inferred (`model_map`) until the proxy carries real traffic |
+| 11 | raw model string + normalized id (generated column) | ✅ |
+| 12 | git branch, HEAD sha, dirty flag | ⚠️ branch from the Claude Code transcript only; **sha and dirty are always NULL** (git gap-fill not built) |
 
-## Capture strategy — implement in this priority order per agent
-
-### Layer 1 — session log tailer (primary)
-
-Most CLI agents persist session transcripts as JSON/JSONL under a home directory. Tail these with a watcher, parse incrementally, resume from a byte-offset checkpoint so restarts don't re-ingest.
-
-### Layer 2 — agent hooks (enrichment)
-
-Where the agent exposes lifecycle hooks (session start, prompt submit, pre/post tool use, stop), register hook scripts that POST normalized events to the collector. This is the most reliable source for executed commands and file mutations, because it fires at execution time with real exit codes and real edit payloads.
-
-### Layer 3 — local LLM proxy (fallback + ground truth)
-
-A reverse proxy the agent is pointed at via its base-URL env var. It records request/response bodies and provider-reported `usage`. Use it for agents whose logs omit token counts, and to reconcile Layer 1 numbers.
-
-### Provider attribution
-
-The agent name does not imply the provider. Qwen Code may hit DashScope, OpenRouter, or a local Ollama; Cursor CLI and Copilot CLI route through their own gateways. Resolve provider in this precedence order and record which rule fired in `provider_source`:
-
-1. `proxy` — the API host actually connected to (authoritative)
-2. `config` — resolved base-URL env var / agent config at session start
-3. `model_map` — lookup in `model_providers` by model id prefix (inference)
-4. `unknown` — never guess past this point; leave null and flag it
-
-Store the raw model string verbatim **and** a normalized id. Do not collapse `claude-sonnet-4-5-20250929` and `claude-sonnet-4-5` into one value at ingest — normalize in a generated column so the raw string survives.
-
-> **CRITICAL:** Do not assume log file paths, directory layouts, or JSON shapes from memory. Inspect the actual machine first (`ls`/`find` under the relevant home directories, read a real session file, dump one full record). If a format cannot be determined, say so and ask me to run a command — do not invent a parser against a guessed schema.
+Also on the turn: status (`complete|partial|error|aborted`), prompt attachments (editor selection, open file, `@mentions`, screenshots), and provenance chips.
 
 ---
 
-## Data model requirements
+## Architecture (fixed — do not relitigate)
 
-Tables, at minimum:
-
-- **`projects`** — path (unique), name, git remote, first_seen, last_seen
-- **`sessions`** — agent, agent_version, project_id, external_session_id, provider, model_raw, model_normalized, provider_source, started_at, ended_at, source
-- **`turns`** — session_id, seq, prompt_text, response_text, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, token_source, cost_usd, provider, model_raw, model_normalized, provider_source, git_branch, git_head_sha, git_dirty, started_at, ended_at, status (`complete|partial|error|aborted`)
-- **`tool_calls`** — turn_id, tool_name, command, cwd, exit_code, stdout_excerpt, duration_ms, started_at
-- **`file_changes`** — turn_id, path, change_type, lines_added, lines_removed, is_binary, is_truncated, blob_hash_before, blob_hash_after, attribution (`agent|uncertain`)
-- **`file_change_diffs`** — file_change_id (1:1, separate table), unified_diff TEXT compressed, byte_size. Kept out of `file_changes` so the dashboard list query never TOASTs in multi-MB diffs it doesn't render.
-- **`model_providers`** — model_id_prefix, provider, notes. Seed data, used only for Layer-3-absent inference.
-- **`raw_events`** — source, external_id, payload JSONB, ingested_at
-- **`model_pricing`** — provider, model, input/output/cache rates, effective_from
-
-### Constraints
-
-- `UNIQUE (source, external_id)` on `raw_events` → ingestion is idempotent. Re-running the collector over the same logs must be a no-op.
-- Every timestamp `timestamptz`, stored UTC.
-- Flag whether token counts are provider-reported or locally estimated (`token_source` enum). Never silently mix them.
-- Cost is keyed on **`(provider, model)`**, not model alone — the same model id through OpenRouter or Bedrock prices differently than direct. Computed at ingest and stored; never recomputed retroactively.
-- `sessions` and `turns` both carry provider/model. A session can switch model mid-flight (fallback, `/model` command, rate-limit downgrade) — the **turn** value wins for all reporting.
-- `turns` carries git branch/sha/dirty, captured per turn, not per session: a checkout mid-session is normal.
-- Indexes justified against the actual dashboard queries — state the query plan concern for each (e.g. `(project_id, started_at DESC)` for the project timeline; partial index on `status='partial'` for the reconciler).
+- **Storage:** PostgreSQL 16. Normalized tables + `raw_payload JSONB`. `tsvector` GIN search (input capped at 512 KB per field).
+- **Deployment:** Docker Compose, local-first. Every port published on `127.0.0.1` only.
+- **Collector + proxy:** Node 20 + TypeScript, separate services.
+- **Dashboard:** Next.js App Router, React 19, Tailwind v4, server components. Read-only connection (`default_transaction_read_only=on`).
+- **Layout:** monorepo — `apps/collector`, `apps/proxy`, `apps/web`, `packages/schema`.
+- **Migrations:** versioned, reversible, one transaction each, both directions checksummed. Never edit an applied migration.
 
 ---
 
-## Diff capture — implement explicitly
+## Capture layers
 
-Prefer agent-reported edit payloads over git, and use git only to fill gaps.
+### Layer 1 — session log tailer ✅
 
-- **From hooks (best):** post-tool-use events for edit/write tools usually carry the old and new content, or the exact replacement pair. Compute the unified diff from that payload. This is correct even in a dirty tree and even for untracked files.
-- **From git (gap fill):** record `git rev-parse HEAD` + `git status --porcelain` at turn start, diff against turn end. Known failure: a concurrent human edit in another terminal gets attributed to the agent. Detect by comparing `blob_hash_before` against the hash the agent reported; on mismatch mark the file_change `attribution=uncertain` rather than dropping it.
-- **Caps:** default 256KB per diff, 2MB per turn. Over cap → store head+tail with `is_truncated=true`, never silently drop the row. Binary files get change_type + sizes, no diff body.
-- **Git edge cases:** detached HEAD (store sha, null branch), git worktrees, submodules, bare/no repo, `.git` present but no commits yet, branch renamed mid-session, files outside the repo root.
-- Diffs contain the same secrets prompts do. The redaction pipeline runs over diff bodies before insert, same `redaction_version`.
+- Adapters discover transcripts under read-only-mounted agent homes and emit `ParsedTurn`s; everything after (path translation, redaction, provider, cost, writes) is shared in `ingest.ts`.
+- Checkpoints are **byte offsets in `ingest_checkpoints` (Postgres)**, not a volume file — they advance in the same transaction as the rows. Offset = start of the open turn, not EOF.
+- External ids are content hashes, never line numbers (compaction rewrites transcripts).
+- Rotation (inode change) and truncation (size < offset) → re-read from zero.
+- One transaction per transcript; a failing file is named and counted in a `TRANSCRIPT(S) FAILED` line.
+- Gemini files are re-parsed in full each time (rewritten in place / event log with `$set`); identity is the prompt message id.
 
----
+### Layer 2 — hooks ⚠️
 
-## Edge cases the implementation must handle explicitly
+- `make install-hooks` (`scripts/install-hooks.sh`) registers 9 Claude Code hook events in `~/.claude/settings.json`. Idempotent, backs up, prints uninstall, prints base-URL `export` lines without editing the shell rc.
+- Forwarder POSTs payloads verbatim to `POST /v1/hooks` with `X-Aiuo-Secret` (timing-safe compare). 2 s timeout, always exits 0.
+- Stored unparsed in `raw_events`. Verified shape: [hook-payloads.md](../hook-payloads.md).
+- ❌ **Enrichment pass not built** — folding `raw_events` into `tool_calls` (`exit_code`, measured `duration_ms`, `agent_id`). Sequence from the payload, not arrival order: PostToolUse may run concurrently.
+- Exit codes come only from `PostToolUseFailure.error` (`"Exit code N"`). `PostToolUse` and the OTEL span carry none. Pre-hook history can never be backfilled.
 
-- Resumed / continued sessions that append to an existing transcript
-- Sub-agents and parallel tasks producing nested or interleaved turns
-- Streaming responses where the turn is written incrementally → turn stays `partial` until a terminal event; a reconciler closes stale partials after a timeout
-- Compaction / context-summarization events that rewrite history
-- Same-project work from multiple agents concurrently
-- Agent invoked outside a git repo → project resolution falls back to cwd
-- Log rotation, truncation, and files deleted mid-tail
-- Backfill mode: ingest all pre-existing history on first run, then switch to live tail
-- Conflicting data for the same turn across layers → precedence `hooks > logs > proxy`, with the loser kept in `raw_events`
+### Layer 3 — LLM proxy ⚠️
 
----
+- `apps/proxy` on `:4318`. Tees response chunks to the client, records a capped copy after delivery, no upstream timeout, swallows recording errors.
+- Credential headers replaced with `[REDACTED]`; bodies redacted; stored in `proxy_requests`.
+- `/_u/<name>/...` routes via `PROXY_UPSTREAMS`; default `PROXY_DEFAULT_UPSTREAM`.
+- Usage extraction: Anthropic/OpenAI × streaming/non-streaming.
+- Verified end-to-end with synthetic traffic (2026-09-21). ❌ **Never carried real agent traffic.**
 
-## Running in Docker
+### Layer 4 — OTLP receiver ❌
 
-Four services in one `compose.yaml`:
+Not built.
 
-| service     | purpose                     | published             |
-|-------------|-----------------------------|-----------------------|
-| `postgres`  | storage                     | `127.0.0.1:5433:5432` |
-| `collector` | tailer + hook receiver      | `127.0.0.1:4317:4317` |
-| `proxy`     | LLM reverse proxy (Layer 3) | `127.0.0.1:4318:4318` |
-| `web`       | Next.js dashboard           | `127.0.0.1:3000:3000` |
+### Reconciler ✅
 
-`proxy` is a separate service from `collector` on purpose: restarting the proxy to change an upstream must not drop the tailer's file watches or checkpoints.
+- Closes `partial` turns older than 30 min.
+- Correlates proxy calls to turns on `(model, time window)` with 2-min grace. Two candidate turns → `ambiguous`, left unmatched. No match after 30 min → `no_candidate`.
+- Applies precedence per field. Does not reprice back-filled tokens.
 
-### Host mounts (collector only, all read-only)
+### Precedence and provider attribution
 
-The agents run on the **host**, not in a container. The collector reaches their state through bind mounts:
+- General precedence **hooks > logs > proxy**, field by field, never wholesale. Losers stay in `raw_events`.
+- Provider: `proxy > config > model_map > unknown`, recorded in `provider_source`. The proxy wins provider unconditionally (it observed the host; logs can only infer).
+- Tokens: proxy fills gaps only (`token_source = 'unknown'`), never overwrites provider-reported counts.
+- `model_providers` seed maps prefixes (`claude-`, `gpt-`, `gemini-`, `qwen`, …) for inference only.
 
-- agent session/config dirs → `/host/agents/<agent>` `:ro`
-- my code roots (configurable list) → `/host/code/...` `:ro`
-- a named volume for checkpoints/offsets — these MUST survive `down`/`up` or every restart re-ingests history
-
-### Path translation (mandatory)
-
-Container paths are not host paths. Config takes an ordered `PATH_MAP` of `host_prefix:container_prefix` pairs. Translate at **both** edges:
-
-- **inbound:** hook events arrive from the host with host paths → map to container paths before touching the filesystem
-- **outbound:** everything written to `projects.path`, `tool_calls.cwd`, `file_changes.path` is stored as the **host** path
-
-Never store a `/host/...` path in the database. Add a startup assertion that fails loudly if a configured code root isn't actually mounted — a missing mount must not degrade to "zero turns found".
-
-### File watching
-
-Bind-mount inotify is unreliable on Docker Desktop (macOS/Windows) and fine on native Linux. Watcher takes `WATCH_MODE=inotify|poll|auto`; `auto` probes by writing to a scratch path in a mounted dir and falling back to polling if no event fires within N ms. Log which mode was chosen at startup. Polling interval configurable — default 2s.
-
-### Git inside the container
-
-- `git` installed in the collector image.
-- Container UID/GID settable via build args so it matches my host user; document how to find it. Otherwise `git` rejects the repo with *detected dubious ownership* and all git-based gap fill silently returns nothing.
-- Run `git config --global --add safe.directory '*'` in the image as a belt-and-braces fallback. Safe here: mounts are read-only.
-- If git is unusable for a repo, mark those turns `attribution=uncertain` and surface a dashboard warning. Do not fail the turn.
-
-### Host-side install script
-
-`make install-hooks` (or equivalent) that writes the agent hook configs on the **host**, pointing at `http://127.0.0.1:4317`. Must be idempotent, must back up any existing hook config, and must print an uninstall command. Also emits the `export` lines for pointing each agent's base URL at the proxy — print them, don't edit my shell rc.
-
-### Compose details
-
-- `depends_on: postgres: condition: service_healthy`, with a real `pg_isready` healthcheck. Collector must also retry the connection with backoff rather than crash-looping.
-- Named volume for pgdata. Document the backup command (`pg_dump` into a mounted dir) and the exact `down -v` footgun.
-- Migrations run as a one-shot `migrate` service, not on app boot — two collector replicas racing migrations is a corruption path.
-- `TZ=UTC` on every service.
-- Separate `compose.dev.yaml` override with source bind-mounts + hot reload; base file is production-ish (multi-stage build, non-root user, `NODE_ENV`).
-- Web talks to `postgres:5432` over the compose network, never through the published host port.
-- `.env.example` with every variable, including `PATH_MAP`, `WATCH_MODE`, `COLLECTOR_SHARED_SECRET`, and per-agent enable flags.
+> **CRITICAL:** Do not assume log paths, layouts or JSON shapes from memory. Inspect the machine. If a format cannot be determined, say "I'm not sure" and give the command to run.
 
 ---
 
-## Security (call these out inline in code comments)
+## Data model (as built — 15 tables, 8 enums, migrations 001–014)
 
-- Prompts, command output, and diffs routinely contain API keys, `.env` contents, and customer data. Ship a redaction pipeline that runs **before** insert, with a configurable pattern set, and store a `redaction_version` per row.
-- Collector and proxy listeners bind `0.0.0.0` inside their containers but MUST be published as `127.0.0.1:PORT:PORT` in compose — a bare `PORT:PORT` exposes your full prompt history to the LAN, and Docker's publish rules bypass host firewalls. Shared-secret header on every collector endpoint regardless.
-- All host mounts are `:ro`. The collector never writes to my repos or agent config directories.
-- Cap stored stdout per tool call (configurable, default 8KB) to avoid unbounded rows.
-- Retention policy + hard-delete endpoint by project or date range.
+| Table | Purpose |
+|---|---|
+| `agents`, `providers` | Lookup registries. Providers: `anthropic, openai, google, dashscope, openrouter, ollama, github-copilot, azure, aws-bedrock, google-vertex, unknown` |
+| `redaction_versions` | Version ↔ pattern hash; services refuse to start on mismatch |
+| `projects` | host path (unique), name, remote, first/last seen |
+| `sessions` | agent, project, external id, parent session (sub-agents), provider/model, `provider_source` |
+| `turns` | `(session_id, seq)` unique; prompt/response; token columns incl. 5m/1h cache writes; `token_source`; cost + `cost_source` + `pricing_id`; provider/model; git fields; status; denormalized `project_id`/`agent_id` held by composite FK |
+| `tool_calls` | command, cwd, `exit_code` (NULL = unknown), stdout excerpt (8 KB cap), `duration_ms` + `duration_source` |
+| `file_changes` | path, `old_path`, change type (`add|modify|delete|rename`), +/- lines, binary/truncated flags, blob hashes, `attribution` (`agent|uncertain`) |
+| `file_change_diffs` | 1:1, lz4-compressed body. Never joined in a list query |
+| `model_providers` | prefix → provider, inference only |
+| `model_pricing` | `(provider, model)` rates, 5 buckets, `effective_from/to`, GiST `EXCLUDE` against overlap |
+| `raw_events` | `UNIQUE (source, external_id)`; no FK to projects (survives cascade) |
+| `ingest_checkpoints` | byte offset + resume seq per transcript host path |
+| `proxy_requests` | Layer 3 records + correlation columns |
+| `compactions` | stored compaction runs with their settings (migration 013) |
+
+Enums: `capture_layer`, `token_source` (`provider|proxy|estimated|unknown`), `provider_source`, `turn_status`, `change_type`, `attribution`, `duration_source` (`reported|derived|unknown`), `cost_source` (`priced|unpriced|free_local`).
+
+Full column list, index justification and per-migration rollback cost: [schema.md](../schema.md).
+
+### Invariants (enforced in schema and code)
+
+- **Absence is not zero** — NULL tokens "—", NULL cost "not priced", NULL exit code "unknown". `turns_cost_consistent` CHECK blocks an unpriced turn with a cost.
+- **Cost is never recomputed** — computed at ingest over 5 buckets, stored with `pricing_id`. A price change is a new `model_pricing` row.
+- **Host paths only** — CHECK rejects `/host/...` on every path column.
+- **Idempotent writes** — turns on `(session_id, seq)`, raw events on `(source, external_id)`.
+- Turn-level provider/model and git values win over session-level ones.
+
+### Pricing seeds
+
+- Anthropic (003) — verified against the pricing page 2026-09-11.
+- Google Gemini (014) — operator-supplied 2026-09-24, not independently checked. No long-context tier; 3.7/3.8 Flash promo rows close 2027-01-01.
+- ❌ No rate has been checked against an invoice. Totals are derived, not billing-authoritative.
 
 ---
 
-## Dashboard scope (v1)
+## Diff capture
 
-- **Turn list** — filter by project, agent, provider, model, branch, date range; full-text search over prompt + response. Must not fetch diff bodies.
-- **Turn detail** — prompt, rendered markdown response, command timeline, file change list with collapsible syntax-highlighted diffs.
-- **Aggregates** — tokens and cost by day / project / agent / provider / model / branch, plus a provider × model breakdown.
-- No auth (localhost-only), no multi-user, no write operations.
+- ✅ **From agent payloads:** Claude Code `structuredPatch` rendered as unified diff; created files synthesized against `/dev/null` (their `structuredPatch` is always `[]`). `blob_hash_before` = sha256 of `originalFile`; `userModified` → `attribution = uncertain`.
+- ✅ **Caps:** `COLLECTOR_MAX_DIFF_BYTES` 256 KB per diff, `COLLECTOR_MAX_TURN_DIFF_BYTES` 2 MB per turn; over cap → truncated with `is_truncated`, never dropped. Binary → no body.
+- ✅ Redaction runs over diff bodies before insert.
+- ❌ **Git gap-fill not built.** `git` is installed in the collector image (UID/GID build args, `safe.directory '*'`), but nothing calls it: no HEAD sha, no dirty flag, no git-derived diffs, no git edge-case handling (detached HEAD, worktrees, submodules, empty repos).
+
+---
+
+## Edge cases
+
+| Case | Status |
+|---|---|
+| Resumed sessions replaying history | ✅ (migration 009) |
+| Sub-agents / sidechains | ✅ ingested as child sessions. Parent summary lives only in `raw_events`; aggregates must not sum both |
+| Streaming / partial turns | ✅ `partial` until terminal event; reconciler closes after 30 min |
+| Compaction rewriting transcripts | ✅ content-hash ids; compaction summaries not treated as prompts |
+| Outside a git repo | ✅ project falls back to cwd |
+| Rotation / truncation / deletion | ✅ |
+| Backfill then live tail | ✅ |
+| Cross-layer conflicts | ✅ per-field precedence |
+| Same project, multiple agents concurrently | ⚠️ supported by the model; untested with a second live agent |
+
+---
+
+## Docker
+
+| Service | Purpose | Published |
+|---|---|---|
+| `postgres` | storage, `pg_isready` healthcheck | `127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432` |
+| `migrate` | one-shot migrations (advisory-locked) | — |
+| `collector` | tailer, hook receiver, reconciler | `127.0.0.1:${COLLECTOR_HOST_PORT:-4317}:4317` |
+| `proxy` | Layer 3 | `127.0.0.1:${PROXY_HOST_PORT:-4318}:4318` |
+| `web` | dashboard | `127.0.0.1:${WEB_HOST_PORT:-3000}:3000` |
+
+- Agent homes mounted `:ro` at `/host/agents/<agent>`, code roots at `/host/code/...`. Named volume for pgdata only.
+- `PATH_MAP` — ordered `host:container` pairs; segment-boundary matching, split on last colon, shadowing refused at startup. Translated inbound (hook events) and outbound (DB).
+- Startup fails loudly if an enabled agent home is unmounted, lacks a `PATH_MAP` entry, or a `PATH_MAP` target is unmounted.
+- `WATCH_MODE=inotify|poll|auto` (`auto` probes), `WATCH_POLL_INTERVAL_MS` default 2000.
+- `TZ=UTC` everywhere; `compose.dev.yaml` adds bind mounts + hot reload.
+- Web reaches postgres over the compose network; reaches the collector at `COLLECTOR_URL=http://collector:4317`.
+- `.env.example` documents every variable.
+
+Make targets: `help, uid, up, dev, web, web-dev, down, logs, migrate, migrate-status, backup, install-hooks, uninstall-hooks, typecheck, test, build, clean`.
+
+**`docker compose down -v` deletes all history.** Run `make backup` first.
+
+---
+
+## Security
+
+- ✅ Redaction before insert over prompts, responses, stdout, diffs and proxy bodies. Pattern set **compiled in** (`packages/schema/src/redaction.ts`); changing it requires bumping `Redactor.version`. Credential shapes only — not PII removal. See [redaction.md](../redaction.md).
+- ✅ `127.0.0.1` publishing on every port; never `0.0.0.0`.
+- ✅ Shared secret on `/v1/hooks` and `/v1/compactions`.
+- ✅ All host mounts `:ro`.
+- ✅ stdout cap `COLLECTOR_MAX_STDOUT_BYTES` (8 KB); proxy body cap `PROXY_MAX_STORED_BODY_BYTES` (64 KB).
+- ❌ **Retention policy and hard-delete endpoint (by project or date range) not built.** When built, it must delete `raw_events` explicitly — no cascade reaches them.
+
+---
+
+## Dashboard
+
+- ✅ **Turn list** — filters: project, agent, provider, model, branch, session (dropdown, narrowed by project), date range; full-text search; keyset pagination on `(started_at, id)`; no diff bodies; prompt previews truncated in SQL.
+- ✅ **Turn detail** — prompt + attachments rail, markdown response, command timeline, collapsible diffs, cost and token working on info icons, JSON export.
+- ✅ **Aggregates** — tokens and cost by day / project / agent / provider / model / branch, plus provider × model.
+- ✅ **Health banner** — states where numbers are incomplete (inferred providers, unknown exit codes, unpriced turns).
+- ✅ **Compaction** — pick turns (checkbox or drag to the floating dock) and fold them into one context block. Stage 1 (assembly, local, always runs) is distinct from stage 2 (optional summary via `ANTHROPIC_API_KEY` or local Ollama). Output always says which stage is shown. Runs from a turn's detail page are stored in `compactions` via the collector.
+- No auth, no multi-user. The dashboard DB connection is read-only; its only write path is POSTing compactions to the collector. All UI SQL lives in `apps/web/src/lib/queries.ts`.
 
 ---
 
 ## Non-goals
 
-Cloud sync, team features, billing integration, editing history, IDE plugins.
+Cloud sync, team features, billing integration, editing history, IDE plugins. The optional compaction summary is the only outbound call, and only on an explicit button press.
+
+---
+
+## Open work, in priority order
+
+1. Hook enrichment pass → `tool_calls.exit_code`, `duration_ms` (`reported`), `agent_id`.
+2. Route a real agent through the proxy to verify provider attribution and correlation.
+3. Git gap-fill: HEAD sha, dirty flag, git-derived diffs with `attribution=uncertain` on blob-hash mismatch, and the git edge cases.
+4. Retention policy + hard-delete by project or date range.
+5. Check costs against a real invoice.
+6. Adapters for Codex / Qwen / Cursor once installed and their formats inspected; Copilot via proxy only.
+7. Layer 4 OTLP receiver.
 
 ---
 
 ## Working agreement
 
-- Phase the work and stop for my review between phases:
-  1. **Format discovery report** for all five agents. Must include, per agent: does the transcript record provider or only model? does it record the resolved base URL? does it include edit payloads with old/new content, or only a file path? what hooks exist?
-  2. Schema + migrations
-  3. Compose skeleton + path translation + one adapter end-to-end
-  4. Remaining adapters + proxy
-  5. Dashboard
-- Deliver working code, not pseudocode. Full files when I'll paste them back.
-- When an API, config key, env var, or file path is uncertain — say **"I'm not sure"** and tell me what to run to find out. A wrong guess about a log format costs more than a question.
-- Conventions: `snake_case` in SQL and PHP, `camelCase` in TS.
+- Stop for my review between phases of work.
+- Deliver working code, not pseudocode.
+- When an API, config key, env var or path is uncertain, say **"I'm not sure"** and name the command that would settle it. New findings in `docs/` must cite how they were established.
+- `snake_case` in SQL, `camelCase` in TypeScript; map at the query boundary.
+- Commit and push only when explicitly asked in that message.

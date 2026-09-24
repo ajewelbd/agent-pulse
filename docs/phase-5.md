@@ -278,3 +278,5 @@ These are reported, not fixed, and none blocks the dashboard.
    contract-tested but disabled; the other four target agents are not
    installed on this machine (see
    [phase-1-format-discovery.md](../phase-1-format-discovery.md)).
+   *Update 2026-09-24:* Gemini CLI is now verified and enabled in compose; see
+   the update note in [phase-4.md](phase-4.md#gemini-cli-adapter).
