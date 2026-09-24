@@ -14,7 +14,7 @@ import { Pool } from 'pg';
  */
 declare global {
   // eslint-disable-next-line no-var
-  var __aiuoPool: Pool | undefined;
+  var __agentpulsePool: Pool | undefined;
 }
 
 function createPool(): Pool {
@@ -54,10 +54,10 @@ function createPool(): Pool {
  * refuses new connections.
  */
 export function getPool(): Pool {
-  const existing = globalThis.__aiuoPool;
+  const existing = globalThis.__agentpulsePool;
   if (existing) return existing;
   const pool = createPool();
-  globalThis.__aiuoPool = pool;
+  globalThis.__agentpulsePool = pool;
   return pool;
 }
 

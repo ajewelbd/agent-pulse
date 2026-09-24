@@ -125,5 +125,5 @@ everything:
 1. Edit `DEFAULT_PATTERNS` in `packages/schema/src/redaction.ts`.
 2. Bump `Redactor.version`.
 3. Add the leak you fixed to `apps/collector/src/redaction.test.ts`.
-4. `pnpm --filter @aiuo/collector run test` — the version assertion there
+4. `pnpm --filter @agentpulse/collector run test` — the version assertion there
    fails deliberately if you forget step 2.

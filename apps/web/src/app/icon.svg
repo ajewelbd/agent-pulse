@@ -1,6 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
-  <circle cx="12" cy="4.6" r="2.3" stroke="#12c998" stroke-width="1.7"/>
-  <circle cx="4.8" cy="17.4" r="2.3" stroke="#12c998" stroke-width="1.7"/>
-  <circle cx="19.2" cy="17.4" r="2.3" stroke="#8b6cf6" stroke-width="1.7"/>
-  <path d="M10.6 6.6 6.2 15.2M13.4 6.6l4.4 8.6M7.1 17.4h9.8" stroke="#12c998" stroke-width="1.7" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="t">
+  <title id="t">AgentPulse</title>
+  <!-- Tile -->
+  <rect x="0.5" y="0.5" width="63" height="63" rx="15" fill="#0E1714" stroke="#10C98F" stroke-opacity="0.35"/>
+  <!-- Prompt chevron: the CLI agent -->
+  <path d="M14 21 L25 32 L14 43" fill="none" stroke="#10C98F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Rising bars: what each turn costs -->
+  <rect x="31" y="35" width="6" height="8"  rx="2" fill="#10C98F" fill-opacity="0.4"/>
+  <rect x="40" y="29" width="6" height="14" rx="2" fill="#10C98F" fill-opacity="0.7"/>
+  <rect x="49" y="21" width="6" height="22" rx="2" fill="#10C98F"/>
 </svg>

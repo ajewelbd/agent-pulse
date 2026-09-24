@@ -1,6 +1,6 @@
 # Role
 
-You are a senior backend/platform engineer. Build "AI Usage Observability" — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
+You are a senior backend/platform engineer. Build "AgentPulse" — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
 
 # Target agents (v1)
 

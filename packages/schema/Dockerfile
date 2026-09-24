@@ -8,7 +8,7 @@ COPY packages/schema/package.json packages/schema/
 RUN corepack enable && pnpm install --no-frozen-lockfile
 
 COPY packages/schema packages/schema
-RUN pnpm --filter @aiuo/schema exec tsc -p tsconfig.json
+RUN pnpm --filter @agentpulse/schema exec tsc -p tsconfig.json
 
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime

@@ -11,11 +11,11 @@ RUN corepack enable && pnpm install --no-frozen-lockfile
 
 COPY packages/schema packages/schema
 COPY apps/proxy apps/proxy
-# The trailing "..." selects @aiuo/proxy AND its workspace dependencies, built
+# The trailing "..." selects @agentpulse/proxy AND its workspace dependencies, built
 # in topological order. Without it only the proxy is built, and its import of
-# @aiuo/schema/redaction resolves to a dist/ that this image never produced —
+# @agentpulse/schema/redaction resolves to a dist/ that this image never produced —
 # which used to succeed only because an unignored host build got copied in.
-RUN pnpm --filter "@aiuo/proxy..." run build
+RUN pnpm --filter "@agentpulse/proxy..." run build
 
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime
@@ -23,7 +23,7 @@ FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 
-# The per-package node_modules carries pnpm's symlinks (pg, @aiuo/schema);
+# The per-package node_modules carries pnpm's symlinks (pg, @agentpulse/schema);
 # the root one carries the store they point into. Both are needed.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/proxy/node_modules ./apps/proxy/node_modules

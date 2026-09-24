@@ -1,5 +1,5 @@
 {
-  "name": "@aiuo/proxy",
+  "name": "@agentpulse/proxy",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "tsc -p tsconfig.json && node --test dist/*.test.js"
   },
   "dependencies": {
-    "@aiuo/schema": "workspace:*",
+    "@agentpulse/schema": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": {

@@ -10,7 +10,7 @@ importers:
 
   apps/collector:
     dependencies:
-      '@aiuo/schema':
+      '@agentpulse/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       pg:
@@ -29,7 +29,7 @@ importers:
 
   apps/proxy:
     dependencies:
-      '@aiuo/schema':
+      '@agentpulse/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       pg:

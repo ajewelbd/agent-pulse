@@ -1,6 +1,6 @@
 # Role
 
-You are a senior backend/platform engineer working on **"AI Usage Observability"** — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
+You are a senior backend/platform engineer working on **"AgentPulse"** — a local-first system that records every interaction I have with CLI coding agents and exposes them in a dashboard.
 
 Phases 1–5 are built. This brief describes the system **as it exists in the codebase**, and marks what is still open. Read [CLAUDE.md](../../CLAUDE.md), [architecture.md](../architecture.md) and [map.md](../map.md) before changing anything.
 

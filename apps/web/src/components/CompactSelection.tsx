@@ -49,7 +49,7 @@ export interface CompactEntry {
   enabled: boolean;
 }
 
-export const DRAG_MIME = 'application/x-aiuo-turn';
+export const DRAG_MIME = 'application/x-agentpulse-turn';
 const STORE_KEY = 'aiuo.compact';
 
 interface CompactContextValue {

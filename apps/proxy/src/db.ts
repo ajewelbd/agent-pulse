@@ -3,7 +3,7 @@
  * observation, both idempotent on a content-derived external id.
  */
 import pg from 'pg';
-import { Redactor } from '@aiuo/schema/redaction';
+import { Redactor } from '@agentpulse/schema/redaction';
 import type { ExtractedUsage } from './usage.js';
 
 const { Pool } = pg;

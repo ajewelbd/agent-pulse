@@ -14,7 +14,7 @@ import type {
   DurationSource,
   TokenSource,
   TurnStatus,
-} from '@aiuo/schema/types';
+} from '@agentpulse/schema/types';
 
 export interface DiscoveredTranscript {
   /** Container path to read. */

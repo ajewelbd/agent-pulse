@@ -59,8 +59,8 @@ typecheck: ## Typecheck every package
 	pnpm -r run typecheck
 
 test: ## Run unit tests
-	pnpm --filter @aiuo/collector run test
-	pnpm --filter @aiuo/web run test
+	pnpm --filter @agentpulse/collector run test
+	pnpm --filter @agentpulse/web run test
 
 build: ## Build every package
 	pnpm -r run build

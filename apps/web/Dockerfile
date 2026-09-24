@@ -14,7 +14,7 @@ COPY apps/web apps/web
 # needs a database. If a future page drops that and starts prerendering, the
 # build will fail here with "DATABASE_URL is not set" — which is the right
 # outcome: baking query results into the image would serve stale history.
-RUN pnpm --filter @aiuo/web run build
+RUN pnpm --filter @agentpulse/web run build
 
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime

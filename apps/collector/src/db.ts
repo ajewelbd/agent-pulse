@@ -4,7 +4,7 @@
  * conflict is possible.
  */
 import pg from 'pg';
-import { Redactor } from '@aiuo/schema/redaction';
+import { Redactor } from '@agentpulse/schema/redaction';
 
 const { Pool } = pg;
 
@@ -78,7 +78,7 @@ export class Db {
     if (!rows[0]?.present) {
       throw new Error(
         'Database schema is missing or incomplete. Run the migrate service first ' +
-          '(docker compose run --rm migrate, or pnpm --filter @aiuo/schema migrate up).',
+          '(docker compose run --rm migrate, or pnpm --filter @agentpulse/schema migrate up).',
       );
     }
   }

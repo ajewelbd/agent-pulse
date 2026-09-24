@@ -189,15 +189,18 @@ export const IconSparkle = (p: P) => (
  * against either surface, so nothing is lost by pinning them.
  */
 export const AppLogo = ({ className = 'h-[22px] w-[22px]' }: P) => (
-  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
-    <circle cx="12" cy="4.6" r="2.3" stroke="#12c998" strokeWidth="1.7" />
-    <circle cx="4.8" cy="17.4" r="2.3" stroke="#12c998" strokeWidth="1.7" />
-    <circle cx="19.2" cy="17.4" r="2.3" stroke="#8b6cf6" strokeWidth="1.7" />
+  <svg viewBox="0 0 64 64" aria-hidden="true" className={className}>
+    <rect x="0.5" y="0.5" width="63" height="63" rx="15" fill="#0E1714" stroke="#10C98F" strokeOpacity="0.35" />
     <path
-      d="M10.6 6.6 6.2 15.2M13.4 6.6l4.4 8.6M7.1 17.4h9.8"
-      stroke="#12c998"
-      strokeWidth="1.7"
+      d="M14 21 L25 32 L14 43"
+      fill="none"
+      stroke="#10C98F"
+      strokeWidth="5"
       strokeLinecap="round"
+      strokeLinejoin="round"
     />
+    <rect x="31" y="35" width="6" height="8" rx="2" fill="#10C98F" fillOpacity="0.4" />
+    <rect x="40" y="29" width="6" height="14" rx="2" fill="#10C98F" fillOpacity="0.7" />
+    <rect x="49" y="21" width="6" height="22" rx="2" fill="#10C98F" />
   </svg>
 );

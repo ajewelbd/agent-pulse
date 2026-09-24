@@ -31,10 +31,10 @@ packages/schema/
 ```bash
 export DATABASE_URL=postgres://aiuo:...@127.0.0.1:5433/aiuo
 
-pnpm --filter @aiuo/schema migrate up        # apply pending
-pnpm --filter @aiuo/schema migrate status    # applied/pending + drift check
-pnpm --filter @aiuo/schema migrate verify    # exit 1 if a file was edited after apply
-pnpm --filter @aiuo/schema migrate down --to 5 --yes
+pnpm --filter @agentpulse/schema migrate up        # apply pending
+pnpm --filter @agentpulse/schema migrate status    # applied/pending + drift check
+pnpm --filter @agentpulse/schema migrate verify    # exit 1 if a file was edited after apply
+pnpm --filter @agentpulse/schema migrate down --to 5 --yes
 ```
 
 In Docker this runs as the one-shot `migrate` service, never on app boot — two

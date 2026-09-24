@@ -23,7 +23,7 @@ import { loadProxyConfig, type ProxyConfig } from './config.js';
 import { ProxyDb } from './db.js';
 import { isLocalProvider, providerForHost } from './providers.js';
 import { extractUsage, modelFromRequest, requestWantsStream, EMPTY_USAGE } from './usage.js';
-import { Redactor } from '@aiuo/schema/redaction';
+import { Redactor } from '@agentpulse/schema/redaction';
 
 /**
  * Headers that must never be recorded. The agent's credentials pass through

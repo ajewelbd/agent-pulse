@@ -7,7 +7,7 @@
  */
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { DEFAULT_PATTERNS, Redactor } from '@aiuo/schema/redaction';
+import { DEFAULT_PATTERNS, Redactor } from '@agentpulse/schema/redaction';
 
 const r = new Redactor();
 

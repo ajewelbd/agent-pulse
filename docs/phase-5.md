@@ -152,21 +152,21 @@ the repo.
 into every build context, including pnpm's symlink farm. Added one.
 
 **2. The collector and proxy images were building against host artifacts.**
-Both ran `pnpm --filter @aiuo/<app> run build`, which does not build workspace
+Both ran `pnpm --filter @agentpulse/<app> run build`, which does not build workspace
 *dependencies*. They compiled only because an unignored host-built
 `packages/schema/dist` was being copied in. With `.dockerignore` in place they
 failed immediately:
 
 ```
-src/db.ts(6,26): error TS2307: Cannot find module '@aiuo/schema/redaction'
+src/db.ts(6,26): error TS2307: Cannot find module '@agentpulse/schema/redaction'
 ```
 
-Fixed with `--filter "@aiuo/<app>..."` — the trailing `...` selects the
+Fixed with `--filter "@agentpulse/<app>..."` — the trailing `...` selects the
 package *and* its workspace dependencies, built in topological order.
 
 **3. Runtime stages copied only the root `node_modules`.** Under pnpm the root
 holds the content store (`.pnpm/…`); the *per-package* `node_modules` holds
-the symlinks that make `pg` and `@aiuo/schema` resolvable. Copying only the
+the symlinks that make `pg` and `@agentpulse/schema` resolvable. Copying only the
 root produced images that started and then died:
 
 ```
