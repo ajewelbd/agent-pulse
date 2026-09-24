@@ -6,7 +6,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AI usage observability',
+  title: 'AgentPulse',
   description: 'Local-first record of every CLI coding agent interaction',
 };
 
@@ -66,7 +66,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="mx-auto flex max-w-[1400px] items-center gap-6 px-5">
             <Link href="/" className="flex items-center gap-2.5 py-3">
               <AppLogo />
-              <span className="text-sm font-semibold tracking-tight">AI usage observability</span>
+              <span className="text-sm font-semibold tracking-tight">AgentPulse</span>
             </Link>
 
             <NavTabs />

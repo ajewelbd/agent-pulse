@@ -37,7 +37,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const body = JSON.stringify(
     {
       exported_at: new Date().toISOString(),
-      note: 'Local export from the AI usage observability dashboard. Costs are list-price estimates, not billing records.',
+      note: 'Local export from the AgentPulse dashboard. Costs are list-price estimates, not billing records.',
       turn,
       tool_calls: toolCalls,
       file_changes: fileChanges,

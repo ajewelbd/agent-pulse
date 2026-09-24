@@ -9,12 +9,12 @@ RUN corepack enable && pnpm install --no-frozen-lockfile
 
 COPY packages/schema packages/schema
 COPY apps/collector apps/collector
-# The trailing "..." selects @aiuo/collector AND its workspace dependencies,
+# The trailing "..." selects @agentpulse/collector AND its workspace dependencies,
 # built in topological order. Without it only the collector is built, and its
-# import of @aiuo/schema/redaction resolves to a dist/ this image never
+# import of @agentpulse/schema/redaction resolves to a dist/ this image never
 # produced — which used to succeed only because an unignored host build got
 # copied in.
-RUN pnpm --filter "@aiuo/collector..." run build
+RUN pnpm --filter "@agentpulse/collector..." run build
 
 # ---------------------------------------------------------------------------
 FROM node:20-bookworm-slim AS runtime
@@ -34,13 +34,13 @@ RUN git config --global --add safe.directory '*'
 # (or `make uid`) and pass as build args.
 ARG HOST_UID=501
 ARG HOST_GID=20
-RUN if ! getent group "${HOST_GID}" >/dev/null; then groupadd -g "${HOST_GID}" aiuo; fi \
- && useradd -u "${HOST_UID}" -g "${HOST_GID}" -m -s /bin/bash aiuo 2>/dev/null || true
+RUN if ! getent group "${HOST_GID}" >/dev/null; then groupadd -g "${HOST_GID}" agentpulse; fi \
+ && useradd -u "${HOST_UID}" -g "${HOST_GID}" -m -s /bin/bash agentpulse 2>/dev/null || true
 
 ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 
-# The per-package node_modules carries pnpm's symlinks (pg, @aiuo/schema);
+# The per-package node_modules carries pnpm's symlinks (pg, @agentpulse/schema);
 # the root one carries the store they point into. Both are needed.
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/collector/node_modules ./apps/collector/node_modules

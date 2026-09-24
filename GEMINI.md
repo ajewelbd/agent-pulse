@@ -1,4 +1,4 @@
-# Gemini CLI & AI Usage Observability (`ai-usage-observability`)
+# Gemini CLI & AgentPulse (`agentpulse`)
 
 Local-first observability for CLI coding agents. Every interaction with an agent — prompt, response, command run, file changed, tokens spent — is recorded to a PostgreSQL database on this machine and browsable in a read-only dashboard. **Nothing leaves the machine.**
 

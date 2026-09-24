@@ -89,7 +89,7 @@ make up                # postgres + migrate + collector + proxy
 make web               # + dashboard at :3000
 make logs              # follow the collector
 make typecheck         # every package
-make test              # collector + web tests (proxy: pnpm --filter @aiuo/proxy run test)
+make test              # collector + web tests (proxy: pnpm --filter @agentpulse/proxy run test)
 make migrate-status
 make backup
 ```

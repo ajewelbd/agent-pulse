@@ -37,7 +37,7 @@ services:
       target: builder
     environment:
       NODE_ENV: development
-    command: ["pnpm", "--filter", "@aiuo/web", "run", "dev"]
+    command: ["pnpm", "--filter", "@agentpulse/web", "run", "dev"]
     volumes:
       - ./apps/web/src:/app/apps/web/src
       # Anonymous volume so the container's own .next is never clobbered by a

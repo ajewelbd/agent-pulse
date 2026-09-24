@@ -5,7 +5,7 @@
  * records zero tokens (which looks like a measurement), and a wrong host rule
  * bills gateway traffic at direct rates. Both are testable without a network.
  *
- * Run with: pnpm --filter @aiuo/proxy test
+ * Run with: pnpm --filter @agentpulse/proxy test
  */
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';

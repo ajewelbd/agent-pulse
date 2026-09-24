@@ -62,8 +62,8 @@ docker compose exec -T postgres pg_restore -U aiuo -d aiuo --clean --if-exists \
 ```bash
 make migrate-status                                   # applied / pending, with drift check
 make migrate                                          # apply pending
-pnpm --filter @aiuo/schema migrate verify             # exit 1 if a file changed after apply
-pnpm --filter @aiuo/schema migrate down --to 5 --yes  # roll back to and including 6
+pnpm --filter @agentpulse/schema migrate verify             # exit 1 if a file changed after apply
+pnpm --filter @agentpulse/schema migrate down --to 5 --yes  # roll back to and including 6
 ```
 
 Rollback cost per migration is tabulated in [schema.md](schema.md). Rolling back
@@ -179,13 +179,13 @@ A runtime image stage copied only the root `node_modules`. pnpm puts the real
 store in `node_modules/.pnpm` at the root *and* per-package symlink directories;
 a runtime stage needs both.
 
-### `TS2307: Cannot find module '@aiuo/schema/redaction'` during a build
+### `TS2307: Cannot find module '@agentpulse/schema/redaction'` during a build
 
 The workspace dependency was not built first. Use the trailing `...`, which
 includes workspace dependencies in topological order:
 
 ```bash
-pnpm --filter "@aiuo/collector..." run build
+pnpm --filter "@agentpulse/collector..." run build
 ```
 
 ### `next build` fails with no `DATABASE_URL`
@@ -235,7 +235,7 @@ underlying commands directly — `make help` shows what each target does, and
 
 - `make test` runs the collector's and the dashboard's tests. The proxy's
   `usage.test.ts` is still not in that target; run it with
-  `pnpm --filter @aiuo/proxy run test`.
+  `pnpm --filter @agentpulse/proxy run test`.
 - Restore has never been exercised.
 - There is no automated check that seeded prices still match the provider's
   published rates.

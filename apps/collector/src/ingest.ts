@@ -13,7 +13,7 @@ import type { AgentAdapter, DiscoveredTranscript, ParsedTurn } from './adapters/
 import type { CollectorConfig } from './config.js';
 import { Db } from './db.js';
 import { PathMapper } from './paths.js';
-import type { Redactor } from '@aiuo/schema/redaction';
+import type { Redactor } from '@agentpulse/schema/redaction';
 
 export interface IngestStats {
   turns: number;

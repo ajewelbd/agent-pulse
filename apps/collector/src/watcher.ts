@@ -28,7 +28,7 @@ const PROBE_TIMEOUT_MS = 1500;
  * layer is what drops events.
  */
 export async function probeInotify(scratchDir: string): Promise<boolean> {
-  const probeFile = join(scratchDir, `.aiuo-watch-probe-${process.pid}`);
+  const probeFile = join(scratchDir, `.agentpulse-watch-probe-${process.pid}`);
   let watcher: FSWatcher | undefined;
   try {
     await writeFile(probeFile, 'probe');

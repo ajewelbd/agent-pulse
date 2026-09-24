@@ -10,7 +10,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { loadConfig, type CollectorConfig } from './config.js';
 import { Db } from './db.js';
 import { Ingestor, type IngestStats } from './ingest.js';
-import { Redactor } from '@aiuo/schema/redaction';
+import { Redactor } from '@agentpulse/schema/redaction';
 import { Reconciler } from './reconciler.js';
 import { startHookServer } from './server.js';
 import { resolveWatchMode, Watcher } from './watcher.js';
@@ -204,7 +204,7 @@ async function main(): Promise<void> {
   await db.registerRedactionVersion(redactor.version, redactor.patternHash, redactor.patternCount);
   log(`  redaction version ${redactor.version} (${redactor.patternCount} patterns, ${redactor.patternHash})`);
 
-  const scratch = await mkdtemp(join(tmpdir(), 'aiuo-watch-'));
+  const scratch = await mkdtemp(join(tmpdir(), 'agentpulse-watch-'));
   const watchMode = await resolveWatchMode(config.watchMode, scratch);
   log(`  watch mode: ${watchMode} (configured: ${config.watchMode}, poll interval ${config.watchPollIntervalMs}ms)`);
 

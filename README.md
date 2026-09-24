@@ -1,4 +1,4 @@
-# AI Usage Observability
+# AgentPulse
 
 Local-first observability for CLI coding agents. Every interaction with an agent
 — prompt, response, command run, file changed, tokens spent — is recorded to a
