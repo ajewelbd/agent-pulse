@@ -407,6 +407,53 @@ export class Db {
     return inserted;
   }
 
+  /**
+   * Store a compaction the dashboard produced.
+   *
+   * The collector does this rather than the dashboard because the dashboard's
+   * pool is read-only and that is worth keeping — see CLAUDE.md. This is the
+   * only row in the schema written on an operator's behalf rather than from an
+   * observation of an agent, which is why it is here and not in the ingest
+   * path.
+   *
+   * ON CONFLICT on request_id, not DO UPDATE: the client generates that id
+   * before it posts, so a retry after a timeout must be free, and a second
+   * press of the button is a different compaction with a different id. Nothing
+   * about an existing row should ever be rewritten by a retry.
+   *
+   * Returns false when the row already existed, which the endpoint reports as
+   * accepted-but-not-stored rather than as a failure.
+   */
+  async insertCompaction(c: {
+    requestId: string;
+    turnId: string;
+    provider: string;
+    model: string;
+    length: string;
+    parts: string[];
+    summarized: boolean;
+    reason: string | null;
+    output: string;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    estimatedInputTokens: number;
+    redactionVersion: number;
+  }): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `INSERT INTO compactions (request_id, turn_id, provider, model, length, parts,
+                                summarized, reason, output, input_tokens, output_tokens,
+                                estimated_input_tokens, redaction_version)
+       VALUES ($1::uuid, $2::bigint, $3, $4, $5, $6::text[], $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (request_id) DO NOTHING`,
+      [
+        c.requestId, c.turnId, c.provider, c.model, c.length, c.parts,
+        c.summarized, c.reason, c.output, c.inputTokens, c.outputTokens,
+        c.estimatedInputTokens, c.redactionVersion,
+      ],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async getCheckpoint(
     agentId: number,
     hostFilePath: string,

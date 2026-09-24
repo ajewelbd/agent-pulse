@@ -244,6 +244,10 @@ async function main(): Promise<void> {
     sharedSecret: config.sharedSecret,
     db,
     agentIdFor: (key) => db.getAgentId(key),
+    // Stored compactions are derived from already-redacted columns, but they
+    // are still content, and a later pattern-set change has to be able to find
+    // every row written under the old set.
+    redactionVersion: redactor.version,
   });
   log(`  hook receiver on :${config.port} (published as 127.0.0.1:${config.port})`);
 

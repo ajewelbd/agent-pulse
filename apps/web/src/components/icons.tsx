@@ -6,15 +6,19 @@
  * paths themselves. `currentColor` throughout, so every icon inherits the
  * theme without a per-icon colour prop.
  */
-type P = { className?: string };
+type P = { className?: string; strokeWidth?: number | string };
 
-function Svg({ className = 'h-4 w-4', children }: P & { children: React.ReactNode }) {
+function Svg({
+  className = 'h-4 w-4',
+  strokeWidth = 1.7,
+  children,
+}: P & { children: React.ReactNode }) {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.7"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -148,6 +152,33 @@ export const IconClose = (p: P) => (
 
 export const IconExpand = (p: P) => (
   <Svg {...p}><path d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5" /></Svg>
+);
+
+/**
+ * The compact mark — strokes converging on a point.
+ *
+ * Its own glyph rather than the app logo: the dock is a control, and a floating
+ * button wearing the product's mark reads as "home", not "do this".
+ */
+export const IconCompact = (p: P) => (
+  <Svg {...p}><path d="M12 3v7M12 14v7M5 7l4 3M19 7l-4 3M5 17l4-3M19 17l-4-3M8 12h8" /></Svg>
+);
+
+/** Six dots — the universal "drag me". */
+export const IconGrip = (p: P) => (
+  <Svg strokeWidth={2.4} {...p}><path d="M9 6v.01M9 12v.01M9 18v.01M15 6v.01M15 12v.01M15 18v.01" /></Svg>
+);
+
+export const IconCheck = (p: P) => (
+  <Svg {...p}><path d="m5 13 4 4L19 7" /></Svg>
+);
+
+export const IconPlus = (p: P) => (
+  <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
+);
+
+export const IconSparkle = (p: P) => (
+  <Svg {...p}><path d="m12 4 1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6L12 4Z" /><path d="M18.5 15.5 19 17l1.5.5L19 18l-.5 1.5-.5-1.5L16.5 17l1.5-.5.5-1Z" /></Svg>
 );
 
 /**

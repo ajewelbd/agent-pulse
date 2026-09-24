@@ -1,12 +1,16 @@
 import Link from 'next/link';
 import { TurnFiltersBar } from '@/components/TurnFilters';
 import { CostChip, ProviderChip, StatusDot } from '@/components/Chips';
+import { CompactPanel } from '@/components/CompactPanel';
+import { CompactCount, CompactPicker, CompactPickerAll } from '@/components/CompactPicker';
+import { CompactProvider } from '@/components/CompactSelection';
 import { CostTip } from '@/components/CostTip';
 import { TokenTip } from '@/components/TokenTip';
 import { HealthBanner } from '@/components/HealthBanner';
 import { Pagination } from '@/components/Pagination';
 import { StatTiles } from '@/components/StatTiles';
 import { IconChevronDown, IconFile, IconTerminal, IconWarning } from '@/components/icons';
+import { toCompactRef } from '@/lib/compactRef';
 import { readFilters, sortToggleHref, turnHref } from '@/lib/filters';
 import { cost, duration, shortId, tokenCount, utcClock, utcDay } from '@/lib/format';
 import {
@@ -93,8 +97,12 @@ export default async function TurnListPage({
 
   const maxCost = Math.max(0, ...rows.map((r) => Number(r.cost_usd ?? 0)));
 
+  // Built here, on the server, so the tray's labels come from the same
+  // formatters as the cells beside them — see toCompactRef.
+  const refs = rows.map(toCompactRef);
+
   return (
-    <>
+    <CompactProvider>
       <HealthBanner health={health} />
       <StatTiles rows={rows} />
       <TurnFiltersBar options={options} filters={filters} total={total} />
@@ -105,6 +113,7 @@ export default async function TurnListPage({
           <span className="mono rounded-md border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-ink-2">
             {total.toLocaleString('en-US')} results
           </span>
+          <CompactCount />
           <Link
             href={sortToggleHref(filters)}
             title="Sort by start time. Click to reverse."
@@ -122,6 +131,7 @@ export default async function TurnListPage({
             <table className="w-full min-w-[1100px] text-sm">
               <thead>
                 <tr className="eyebrow border-b border-line">
+                  <CompactPickerAll turns={refs} />
                   <th className={TH}>Started</th>
                   <th className={TH}>Project</th>
                   <th className={TH}>Prompt</th>
@@ -134,7 +144,7 @@ export default async function TurnListPage({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((t) => {
+                {rows.map((t, i) => {
                   const long = Number(t.duration_ms ?? 0) >= LONG_TURN_MS;
                   const costPct = maxCost > 0 ? (Number(t.cost_usd ?? 0) / maxCost) * 100 : 0;
                   const href = turnHref(t.id, filters, page);
@@ -143,6 +153,8 @@ export default async function TurnListPage({
                       key={t.id}
                       className="group relative border-b border-line-soft align-top last:border-0 hover:bg-surface-2"
                     >
+                      <CompactPicker turn={refs[i]!} />
+
                       <td className="relative px-3 py-3 whitespace-nowrap">
                         <span className="absolute inset-y-0 left-0 w-0.5 bg-accent opacity-0 group-hover:opacity-100" />
                         <Link href={href} className="mono text-xs text-ink">
@@ -279,6 +291,8 @@ export default async function TurnListPage({
           </div>
         </div>
       </section>
-    </>
+
+      <CompactPanel />
+    </CompactProvider>
   );
 }
