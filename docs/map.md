@@ -55,6 +55,7 @@ Everything that both the collector and the proxy must agree on.
 | 012 | exit_code_from_hooks | documents the observed derivation rule from `PostToolUseFailure` |
 | 013 | compactions | `compactions` — operator-initiated compactions, with the settings that made each |
 | 014 | google_pricing | first Gemini rates (operator-supplied 2026-09-24, unverified); no long-context tier |
+| 015 | opus_5_5_pricing | `claude-opus-5-5` rates; cache writes derived from the 1.25× / 2× multipliers |
 
 011 and 012 exist because **an applied migration is never edited**. When one
 turns out to state something false, the correction is a new migration.
