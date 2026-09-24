@@ -84,7 +84,8 @@ services:
       AGENT_QWEN_CODE_ENABLED: ${AGENT_QWEN_CODE_ENABLED:-false}
       AGENT_CURSOR_CLI_ENABLED: ${AGENT_CURSOR_CLI_ENABLED:-false}
       AGENT_COPILOT_CLI_ENABLED: ${AGENT_COPILOT_CLI_ENABLED:-false}
-      AGENT_GEMINI_CLI_ENABLED: ${AGENT_GEMINI_CLI_ENABLED:-false}
+      AGENT_GEMINI_CLI_ENABLED: ${AGENT_GEMINI_CLI_ENABLED:-true}
+      AGENT_GEMINI_CLI_HOME: /host/agents/gemini
     ports:
       - "127.0.0.1:${COLLECTOR_HOST_PORT:-4317}:4317"
     volumes:
@@ -94,6 +95,7 @@ services:
       # roots: checkpoints are keyed on the transcript's HOST path and the
       # database rejects /host/... outright. Startup asserts this.
       - ${CLAUDE_HOME:-~/.claude}:/host/agents/claude:ro
+      - ${GEMINI_HOME:-~/.gemini}:/host/agents/gemini:ro
       # Code roots. These paths must line up with PATH_MAP or startup fails
       # loudly — a missing mount must not degrade to "zero turns found".
       - ${CODE_ROOT_1:?set CODE_ROOT_1 in .env}:/host/code/root1:ro
