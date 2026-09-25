@@ -6,6 +6,11 @@ Running it, keeping it, and every failure mode actually hit so far.
 
 ## Everyday
 
+Installed with `./install.sh`? Then `./install.sh` re-checks it,
+`./install.sh --upgrade` updates it and `./install.sh --uninstall` removes it
+(database kept) — in either mode; see [install.md](install.md). The `make`
+targets below are the Docker-mode equivalents underneath.
+
 ```bash
 make up            # postgres + migrate + collector + proxy
 make web           # + the dashboard, at http://127.0.0.1:3000
@@ -226,8 +231,9 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:4318
 ### `make: command not found` (macOS)
 
 No Xcode command line tools. Either `xcode-select --install`, or run the
-underlying commands directly — `make help` shows what each target does, and
-`scripts/install-hooks.sh` runs standalone.
+underlying commands directly — `make help` shows what each target does,
+`./install.sh` needs no `make` at all, and `scripts/install-hooks.sh` runs
+standalone.
 
 ---
 

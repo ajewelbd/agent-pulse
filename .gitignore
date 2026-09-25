@@ -7,7 +7,15 @@ dist/
 # Never commit a real .env — it holds COLLECTOR_SHARED_SECRET and DB creds.
 .env
 .env.local
+# Taken by install.sh before every change; they hold the same secrets.
+.env.bak.*
 !.env.example
+
+# Generated from .env by scripts/installer/compose-override.sh.
+compose.override.yaml
+
+# install.sh state and log (no secrets, but machine-specific).
+.install/
 
 # pg_dump output target (see docs/schema.md → Backup)
 backups/

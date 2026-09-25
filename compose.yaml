@@ -99,11 +99,11 @@ services:
       # Code roots. These paths must line up with PATH_MAP or startup fails
       # loudly — a missing mount must not degrade to "zero turns found".
       - ${CODE_ROOT_1:?set CODE_ROOT_1 in .env}:/host/code/root1:ro
-      # Required rather than defaulted: there is no safe placeholder for a
-      # bind-mount source, and a wrong one mounts the wrong tree read-only
-      # under a name the mapper trusts. Delete this line if you have one root.
-      - ${CODE_ROOT_2:?set CODE_ROOT_2 in .env, or delete this mount line}:/host/code/root2:ro
-      # Add CODE_ROOT_3… here as needed, with a matching PATH_MAP entry.
+      # CODE_ROOT_2… are mounted from compose.override.yaml, generated from .env
+      # by `make compose-override` (run by make up/web/dev). They cannot live
+      # here: compose rejects an empty volume entry, so an optional mount has no
+      # form, and a placeholder source would mount an empty tree under a name
+      # the mapper trusts — defeating the "not mounted" startup check.
       # Checkpoints live in Postgres (see docs/schema.md), so no named volume
       # is needed here for offsets — pgdata carries them.
     depends_on:

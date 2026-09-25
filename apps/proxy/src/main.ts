@@ -301,8 +301,9 @@ async function main(): Promise<void> {
     });
   });
   // Binds 0.0.0.0 INSIDE the container; compose publishes 127.0.0.1:4318 only.
-  server.listen(config.port, '0.0.0.0');
-  log(`  listening on :${config.port}`);
+  // Natively there is no publish layer, so PROXY_BIND_HOST must be 127.0.0.1.
+  server.listen(config.port, config.bindHost);
+  log(`  listening on ${config.bindHost}:${config.port}`);
 
   const shutdown = async (signal: string): Promise<void> => {
     log(`${signal} received, shutting down`);

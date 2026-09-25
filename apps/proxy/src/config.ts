@@ -10,6 +10,8 @@
 export interface ProxyConfig {
   databaseUrl: string;
   port: number;
+  /** Listen address. 0.0.0.0 is only safe inside a container publishing 127.0.0.1. */
+  bindHost: string;
   /** Where requests go when no /_u/<name> prefix is used. */
   defaultUpstream: string;
   /** Named upstreams, reachable as /_u/<name>/... */
@@ -82,6 +84,8 @@ export function loadProxyConfig(): ProxyConfig {
   return {
     databaseUrl: required('DATABASE_URL'),
     port: intEnv('PROXY_PORT', 4318),
+    // Default unchanged for compose; a native install sets 127.0.0.1.
+    bindHost: process.env['PROXY_BIND_HOST']?.trim() || '0.0.0.0',
     defaultUpstream: assertHttpUrl(
       process.env['PROXY_DEFAULT_UPSTREAM'] ?? 'https://api.anthropic.com',
       'PROXY_DEFAULT_UPSTREAM',

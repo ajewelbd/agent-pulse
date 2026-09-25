@@ -39,8 +39,8 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
-- Docker with Compose v2
-- Node 20+ and pnpm 10 — only for running things outside containers
+- Docker with Compose v2 or later — or, for a native install, Node 20, pnpm 10
+  (corepack is enough) and PostgreSQL 16, which the installer offers to install
 - An agent that writes transcripts. Claude Code and Gemini CLI are verified.
   Gemini is on by default under compose; set `AGENT_GEMINI_CLI_ENABLED=false`
   if `~/.gemini` does not exist.
@@ -48,17 +48,35 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 ## Quickstart
 
 ```bash
+./install.sh          # or: make install
+```
+
+It asks Docker or native, detects what it can (agent homes, ports, your
+UID/GID), generates the secrets, asks for the rest (at least one code root),
+shows every value with its source, and starts the stack once it is healthy on
+`127.0.0.1` only. Re-running it is safe; `./install.sh --upgrade` and
+`./install.sh --uninstall` do what they say, and the database is only ever
+deleted by `--uninstall --purge`, after a typed confirmation and a backup.
+Everything else — flags, where files go, the native prerequisites — is in
+[docs/install.md](docs/install.md).
+
+### Manual setup (Docker)
+
+```bash
 cp .env.example .env
 ```
 
-Then edit `.env`. Four values have no safe default and startup fails without them:
+Then edit `.env`. Three values have no safe default and startup fails without them:
 
 ```bash
 POSTGRES_PASSWORD=...              # anything, it never leaves this machine
 COLLECTOR_SHARED_SECRET=...        # openssl rand -hex 32
 CODE_ROOT_1=/absolute/path/to/your/code
-CODE_ROOT_2=/another/path          # or delete that mount line in compose.yaml
+CODE_ROOT_2=/another/path          # optional; add _3, _4 … as needed
 ```
+
+`CODE_ROOT_2` and up are mounted from `compose.override.yaml`, which
+`make up` / `make web` regenerate from `.env` (`make compose-override`).
 
 `PATH_MAP` is the one that trips people up. It maps host paths to the container
 paths they are mounted at, and it **must include the agent's home directory**,
@@ -172,6 +190,7 @@ Stated plainly because the dashboard's own banner states them too:
 
 | Doc | What's in it |
 |---|---|
+| [docs/install.md](docs/install.md) | The installer: usage, then how every choice in it was established |
 | [docs/architecture.md](docs/architecture.md) | How the pieces fit, and why each decision went the way it did |
 | [docs/map.md](docs/map.md) | Every file in the repo and what it's responsible for |
 | [docs/operations.md](docs/operations.md) | Running it, backing it up, and every failure mode hit so far |

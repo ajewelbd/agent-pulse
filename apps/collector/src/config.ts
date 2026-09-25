@@ -19,6 +19,8 @@ export interface AgentConfig {
 export interface CollectorConfig {
   databaseUrl: string;
   port: number;
+  /** Listen address. 0.0.0.0 is only safe inside a container publishing 127.0.0.1. */
+  bindHost: string;
   sharedSecret: string;
   pathMapper: PathMapper;
   watchMode: WatchMode;
@@ -80,6 +82,9 @@ export function loadConfig(): CollectorConfig {
   return {
     databaseUrl: required('DATABASE_URL'),
     port: intEnv('COLLECTOR_PORT', 4317),
+    // The default stays 0.0.0.0 so compose behaves exactly as before; a native
+    // install has no publish layer in front of it and must set 127.0.0.1.
+    bindHost: process.env['COLLECTOR_BIND_HOST']?.trim() || '0.0.0.0',
     sharedSecret,
     pathMapper: PathMapper.parse(required('PATH_MAP')),
     watchMode: watchModeRaw,

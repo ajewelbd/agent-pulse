@@ -241,6 +241,7 @@ async function main(): Promise<void> {
 
   const server = startHookServer({
     port: config.port,
+    bindHost: config.bindHost,
     sharedSecret: config.sharedSecret,
     db,
     agentIdFor: (key) => db.getAgentId(key),
@@ -249,7 +250,7 @@ async function main(): Promise<void> {
     // every row written under the old set.
     redactionVersion: redactor.version,
   });
-  log(`  hook receiver on :${config.port} (published as 127.0.0.1:${config.port})`);
+  log(`  hook receiver on ${config.bindHost}:${config.port}`);
 
   let scanning = false;
   let rescanQueued = false;

@@ -72,6 +72,17 @@ schema as well as in code.
 - Diff bodies live in `file_change_diffs`, separate from `file_changes`, so list
   queries can't drag multi-MB TOASTed values. Don't join them in a list query.
 - All SQL the UI runs lives in `apps/web/src/lib/queries.ts`. Keep it there.
+- **`compose.override.yaml` is generated** from `CODE_ROOT_2…N` in `.env`
+  (`scripts/installer/compose-override.sh`, run by `make up/web/dev` and the
+  installer). Edit `.env`, not the file; it refuses to overwrite one it did not
+  write.
+- **The collector and proxy bind `0.0.0.0` by default** — correct only inside a
+  container that publishes `127.0.0.1`. Anything running them outside Docker
+  must set `COLLECTOR_BIND_HOST` / `PROXY_BIND_HOST=127.0.0.1` (native install
+  does).
+- `.env.example` is parsed by the installer: every variable needs a `# @tags`
+  line directly above it (legend at the top of the file). A `@derived` variable
+  also needs a derivation in `scripts/installer/env.sh`, or the install stops.
 
 ## Working against the live database
 
@@ -84,12 +95,15 @@ something about write behaviour, use `CREATE TEMP TABLE` or a scratch database.
 ## Commands
 
 ```bash
+./install.sh           # one-command install, Docker or native (make install / make uninstall)
 make help              # every target
 make up                # postgres + migrate + collector + proxy
 make web               # + dashboard at :3000
 make logs              # follow the collector
 make typecheck         # every package
-make test              # collector + web tests (proxy: pnpm --filter @agentpulse/proxy run test)
+make test              # collector + web + installer tests (proxy: pnpm --filter @agentpulse/proxy run test)
+make test-installer    # installer only; integration: scripts/installer/tests/*-integration.sh
+make shellcheck
 make migrate-status
 make backup
 ```
@@ -106,7 +120,9 @@ in the working tree, and report what changed and how you'd group it.
 ## Current state
 
 Working: Layer 1 tailing (Claude Code), Layer 2 hook capture, Layer 3 proxy,
-reconciliation, the dashboard.
+reconciliation, the dashboard, the installer (`install.sh`: Docker verified on
+macOS; native verified on macOS/launchd and Ubuntu 24.04/systemd — see
+`docs/install.md`).
 
 Not done — don't assume otherwise:
 
@@ -123,4 +139,6 @@ Not done — don't assume otherwise:
 - **Git gap-fill** is not built: `git` is in the collector image but nothing
   calls it, so `git_head_sha` and `git_dirty` are always NULL.
 - **Retention / hard-delete** by project or date range is not built.
+- Installer, unverified: Docker mode on a Linux engine, WSL2, dnf/pacman
+  package selection, switching an install between Docker and native.
 - Gemini rates (migration 014) are operator-supplied and unverified.

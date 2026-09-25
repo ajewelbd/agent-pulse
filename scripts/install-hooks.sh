@@ -11,19 +11,38 @@
 #                           printed for you to paste if you want Layer 3.
 #
 # Usage:
-#   scripts/install-hooks.sh [--uninstall] [--port 4317]
+#   scripts/install-hooks.sh [--uninstall] [--port 4317] [--proxy-port 4318]
+#
+# Both ports default to COLLECTOR_HOST_PORT / PROXY_HOST_PORT from .env, so a
+# port moved to dodge a collision does not leave hooks posting to the old one.
 
 set -euo pipefail
 
-PORT=4317
+PORT=""
+PROXY_PORT=""
 UNINSTALL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --uninstall) UNINSTALL=true; shift ;;
     --port) PORT="$2"; shift 2 ;;
+    --proxy-port) PROXY_PORT="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ ! -f "${ENV_FILE:=$(dirname "$0")/../.env}" ]]; then
+  echo "error: .env not found at $ENV_FILE — copy .env.example and set COLLECTOR_SHARED_SECRET first." >&2
+  exit 1
+fi
+
+env_value() {
+  grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- || true
+}
+
+PORT="${PORT:-$(env_value COLLECTOR_HOST_PORT)}"
+PORT="${PORT:-4317}"
+PROXY_PORT="${PROXY_PORT:-$(env_value PROXY_HOST_PORT)}"
+PROXY_PORT="${PROXY_PORT:-4318}"
 
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 SETTINGS="$CLAUDE_HOME/settings.json"
@@ -31,11 +50,7 @@ HOOK_DIR="$CLAUDE_HOME/aiuo"
 HOOK_SCRIPT="$HOOK_DIR/post-event.sh"
 ENDPOINT="http://127.0.0.1:${PORT}/v1/hooks"
 
-if [[ ! -f "${ENV_FILE:=$(dirname "$0")/../.env}" ]]; then
-  echo "error: .env not found at $ENV_FILE — copy .env.example and set COLLECTOR_SHARED_SECRET first." >&2
-  exit 1
-fi
-SECRET="$(grep -E '^COLLECTOR_SHARED_SECRET=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+SECRET="$(env_value COLLECTOR_SHARED_SECRET)"
 if [[ -z "$SECRET" ]]; then
   echo "error: COLLECTOR_SHARED_SECRET is empty in $ENV_FILE" >&2
   exit 1
@@ -168,8 +183,8 @@ Done. Hooks post to ${ENDPOINT}
   Optional — Layer 3 proxy. These are printed, not written to your shell rc;
   paste them into the shell you launch the agent from:
 
-    export ANTHROPIC_BASE_URL=http://127.0.0.1:4318
+    export ANTHROPIC_BASE_URL=http://127.0.0.1:${PROXY_PORT}
     # Codex CLI / Qwen Code / others that speak OpenAI-compatible APIs:
-    export OPENAI_BASE_URL=http://127.0.0.1:4318/v1
+    export OPENAI_BASE_URL=http://127.0.0.1:${PROXY_PORT}/v1
 
 EOF

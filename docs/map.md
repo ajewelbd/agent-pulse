@@ -13,6 +13,7 @@ for *how to run it* see [operations.md](operations.md).
 ```
 compose.yaml          4 services + pgdata volume. Every port bound to 127.0.0.1.
 compose.dev.yaml      Dev override: source bind-mounts, hot reload, poll watching.
+install.sh            One-command installer (Docker or native). Usage in docs/install.md.
 Makefile              Every workflow. `make help` lists them.
 .env.example          Every variable, with the reason each exists.
 .dockerignore         Keeps node_modules / dist / .next / .env out of the build context.
@@ -334,12 +335,30 @@ detoasts every prompt payload on the page — 276 ms for 25 rows against 2.3 ms
 
 | File | Responsibility |
 |---|---|
-| `install-hooks.sh` | Registers 9 hook events in `~/.claude/settings.json`. Idempotent, backs up, self-uninstalling, never touches your shell rc |
+| `install-hooks.sh` | Registers 9 hook events in `~/.claude/settings.json`. Idempotent, backs up, self-uninstalling, never touches your shell rc. `--port` / `--proxy-port` default to the ports in `.env` |
+
+### `scripts/installer` — what `install.sh` sources
+
+bash 3.2 compatible throughout (macOS `/bin/bash`), with no arrays at all.
+
+| File | Responsibility |
+|---|---|
+| `lib.sh` | Output and log, prompts, masking, OS and port detection, atomic writes, `backup_write` (the shared `pg_dump -Fc` file handling) |
+| `env.sh` | Parses `.env.example`'s tags and `.env`. Precedence, detection, derivation, validation, the bash port of `PathMapper.parse`, the confirmation table |
+| `docker.sh` | Preflight, the single `dc` compose wrapper, health, 127.0.0.1 port check, backup, upgrade, uninstall/purge |
+| `native.sh` | Prerequisites (consent-gated installs), own-or-reused PostgreSQL 16, build, migrate, health, loopback check, backup, uninstall/purge |
+| `services.sh` | systemd `--user` units and launchd LaunchAgents: render, write, apply, remove, logs |
+| `service-run.sh` | What a LaunchAgent runs: loads `.env` with `env.sh`'s parser, applies forced values, then execs |
+| `compose-override.sh` | Writes `compose.override.yaml` with read-only mounts for `CODE_ROOT_2…N` |
+| `tests/run.sh` | 40 plain-bash tests; stub docker/lsof/ss/curl for the end-to-end ones |
+| `tests/docker-integration.sh` | Real Docker, isolated project and ports; opt-in |
+| `tests/native-integration.sh` | Real Node, PostgreSQL 16 and launchd/systemd, isolated instance and ports; opt-in |
 
 ## `docs`
 
 | File | Contents |
 |---|---|
+| `install.md` | The installer: usage first, then every finding with how it was established |
 | `architecture.md` | How it fits together and why |
 | `map.md` | This file |
 | `operations.md` | Running, backup/restore, every failure mode hit so far |

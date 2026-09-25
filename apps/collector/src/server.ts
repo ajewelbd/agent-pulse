@@ -3,7 +3,8 @@
  *
  * SECURITY: this listener binds 0.0.0.0 INSIDE the container, which is correct
  * — it is published as 127.0.0.1:4317 in compose, so it is not reachable from
- * the LAN. The shared-secret header is required on every data endpoint anyway:
+ * the LAN. Run natively there is no publish layer, so COLLECTOR_BIND_HOST must
+ * be 127.0.0.1 (the installer sets it). The shared-secret header is required on every data endpoint anyway:
  * any local process could otherwise post fabricated turns into your history,
  * or (worse) read it back.
  *
@@ -56,6 +57,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 export interface HookServerOptions {
   port: number;
+  bindHost: string;
   sharedSecret: string;
   db: Db;
   agentIdFor: (agentKey: string) => Promise<number>;
@@ -122,7 +124,7 @@ export function startHookServer(options: HookServerOptions): Server {
       res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'internal error' }));
     });
   });
-  server.listen(options.port, '0.0.0.0');
+  server.listen(options.port, options.bindHost);
   return server;
 }
 
